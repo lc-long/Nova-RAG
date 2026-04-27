@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Upload, FileText, Trash2, BookOpen } from 'lucide-react'
+import axios from 'axios'
+import { Upload, FileText, Trash2, BookOpen, Loader2 } from 'lucide-react'
 
 interface SidebarProps {
   currentDoc: string | null
@@ -19,26 +20,45 @@ const mockDocs: Document[] = [
   { id: '3', name: '技术方案.docx', size: '890KB', date: '2026-04-15' },
 ]
 
+const API_BASE = 'http://localhost:8080/api/v1'
+
 export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
   const [docs, setDocs] = useState<Document[]>(mockDocs)
   const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
     setUploading(true)
-    // Stub for Go backend upload
-    setTimeout(() => {
+    setUploadError(null)
+
+    const formData = new FormData()
+    formData.append('file', file)
+
+    try {
+      const response = await axios.post(`${API_BASE}/docs/upload`, formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data',
+        },
+        timeout: 30000,
+      })
+
       const newDoc: Document = {
-        id: Date.now().toString(),
+        id: response.data.doc_id || Date.now().toString(),
         name: file.name,
         size: `${(file.size / 1024).toFixed(0)}KB`,
         date: new Date().toISOString().split('T')[0],
       }
       setDocs(prev => [newDoc, ...prev])
+    } catch (error: any) {
+      setUploadError(error.response?.data?.error || '上传失败，请重试')
+      setTimeout(() => setUploadError(null), 3000)
+    } finally {
       setUploading(false)
-    }, 1500)
+      e.target.value = ''
+    }
   }
 
   return (
@@ -50,8 +70,17 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
         </div>
 
         <label className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer transition-colors">
-          <Upload className="w-4 h-4" />
-          <span className="text-sm font-medium">{uploading ? '上传中...' : '上传文档'}</span>
+          {uploading ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm font-medium">上传中...</span>
+            </>
+          ) : (
+            <>
+              <Upload className="w-4 h-4" />
+              <span className="text-sm font-medium">上传文档</span>
+            </>
+          )}
           <input
             type="file"
             accept=".pdf,.md,.docx"
@@ -60,6 +89,10 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
             disabled={uploading}
           />
         </label>
+
+        {uploadError && (
+          <p className="mt-2 text-xs text-red-500 text-center">{uploadError}</p>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">

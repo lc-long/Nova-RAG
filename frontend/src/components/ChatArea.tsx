@@ -13,6 +13,8 @@ interface Message {
   references?: { index: number; doc_id: string; content: string }[]
 }
 
+const API_BASE = 'http://localhost:8080/api/v1'
+
 export default function ChatArea({ currentDoc }: ChatAreaProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -41,7 +43,6 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
     setInput('')
     setStreaming(true)
 
-    // Stub streaming response
     const assistantMessage: Message = {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
@@ -49,35 +50,76 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
     }
     setMessages(prev => [...prev, assistantMessage])
 
-    // Simulate streaming from SSE
-    const responseText = `根据您上传的文档，我为您找到了以下相关信息：
+    try {
+      const response = await fetch(`${API_BASE}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: [
+            { role: 'user', content: input }
+          ],
+          stream: true
+        }),
+      })
 
-在**员工手册**第3章中明确规定了报销流程：
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}`)
+      }
 
-1. 差旅费报销需在回来后 **5个工作日** 内提交申请
-2. 发票必须为**增值税发票**才可报销
-3. 单次报销金额超过 **5000元** 需部门负责人签字
+      const reader = response.body?.getReader()
+      const decoder = new TextDecoder()
 
-如需了解更多细节，请查阅完整的员工手册文档。`
+      if (!reader) throw new Error('No reader available')
 
-    for (let i = 0; i < responseText.length; i += 3) {
-      await new Promise(resolve => setTimeout(resolve, 20))
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+
+        for (const line of lines) {
+          if (line.startsWith('data:')) {
+            const data = line.slice(5).trim()
+            if (data === '[DONE]') continue
+
+            try {
+              const parsed = JSON.parse(data)
+              if (parsed.content) {
+                setMessages(prev => {
+                  const updated = [...prev]
+                  const lastMsg = updated[updated.length - 1]
+                  lastMsg.content += parsed.content
+                  return updated
+                })
+              }
+              if (parsed.done && parsed.references) {
+                setMessages(prev => {
+                  const updated = [...prev]
+                  const lastMsg = updated[updated.length - 1]
+                  lastMsg.references = parsed.references
+                  return updated
+                })
+              }
+            } catch {
+              // Ignore parse errors for partial data
+            }
+          }
+        }
+      }
+    } catch (error) {
       setMessages(prev => {
         const updated = [...prev]
         const lastMsg = updated[updated.length - 1]
-        lastMsg.content = responseText.slice(0, i + 3)
+        lastMsg.content = `错误：无法连接到后端服务 (${error})`
         return updated
       })
     }
-
-    setMessages(prev => {
-      const updated = [...prev]
-      const lastMsg = updated[updated.length - 1]
-      lastMsg.references = [
-        { index: 1, doc_id: '员工手册.pdf', content: '第3章 报销流程与标准' },
-      ]
-      return updated
-    })
 
     setStreaming(false)
   }
@@ -153,7 +195,7 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
             className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
           >
             <Send className="w-4 h-4" />
-            发送
+            {streaming ? '生成中...' : '发送'}
           </button>
         </div>
       </form>

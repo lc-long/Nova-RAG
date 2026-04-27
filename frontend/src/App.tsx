@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
-import './App.css'
 
 function App() {
   const [currentDoc, setCurrentDoc] = useState<string | null>(null)
