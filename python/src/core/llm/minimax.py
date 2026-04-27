@@ -57,7 +57,7 @@ class MinimaxClient:
         }
 
         payload = {
-            "model": "abab6.5s-chat",
+            "model": "minimax-text-01",
             "group_id": self.group_id,
             "messages": [{"role": "user", "content": prompt}],
             "stream": True
@@ -88,17 +88,14 @@ class MinimaxClient:
 
                 # Ensure data is a dict and choices exists
                 if not isinstance(data, dict):
-                    print(f"[Minimax] Warning: received non-dict data: {type(data)}")
                     continue
 
                 choices = data.get("choices")
                 if not choices or not isinstance(choices, list) or len(choices) == 0:
-                    print(f"[Minimax] Warning: choices missing or empty in data: {data}")
                     continue
 
                 delta = choices[0].get("delta", {})
                 if not isinstance(delta, dict):
-                    print(f"[Minimax] Warning: delta is not a dict: {type(delta)}")
                     continue
 
                 content = delta.get("content", "")
@@ -110,10 +107,9 @@ class MinimaxClient:
                     )
             except json.JSONDecodeError:
                 # Skip malformed JSON (e.g., partial data)
-                print(f"[Minimax] Warning: JSON decode failed for: {event.data[:100]}")
                 continue
-            except Exception as e:
-                print(f"[Minimax] Warning: Unexpected error processing event: {e}")
+            except Exception:
+                # Skip other processing errors silently
                 continue
 
         yield StreamChunk(content="", done=True, references=references)
