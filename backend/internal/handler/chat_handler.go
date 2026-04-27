@@ -1,10 +1,10 @@
 package handler
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -68,22 +68,16 @@ func (h *ChatHandler) Completions(c *gin.Context) {
 		return
 	}
 
-	reader := resp.Body
-	buf := make([]byte, 1024)
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			_, writeErr := c.Writer.Write(buf[:n])
-			if writeErr == nil {
-				flusher.Flush()
-			}
-			fmt.Printf("[ChatHandler] Proxy bytes: %d\n", n)
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	for scanner.Scan() {
+		line := scanner.Text()
+		if _, err := c.Writer.WriteString(line + "\n"); err == nil {
+			flusher.Flush()
 		}
-		if err != nil {
-			if err != io.EOF {
-				fmt.Printf("[ChatHandler] Read error: %v\n", err)
-			}
-			break
-		}
+		fmt.Printf("[ChatHandler] SSE line: %s\n", line)
+	}
+	if err := scanner.Err(); err != nil {
+		fmt.Printf("[ChatHandler] Scan error: %v\n", err)
 	}
 }
