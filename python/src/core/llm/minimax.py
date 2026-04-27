@@ -1,6 +1,7 @@
-"""Minimax m2.7 LLM client with streaming support."""
+"""Minimax m2.7 LLM client with native HTTP requests and SSE streaming."""
 import os
-from typing import Generator, Optional
+import json
+from typing import Generator, Optional, Any
 from dataclasses import dataclass
 
 
@@ -18,7 +19,7 @@ class StreamChunk:
 
 
 class MinimaxClient:
-    """Minimax m2.7 streaming client."""
+    """Minimax m2.7 streaming client using native requests."""
 
     def __init__(
         self,
@@ -34,7 +35,7 @@ class MinimaxClient:
         messages: list[Message],
         context_chunks: list[dict]
     ) -> Generator[StreamChunk, None, None]:
-        """Stream chat completion with RAG context.
+        """Stream chat completion with RAG context using SSE.
 
         Args:
             messages: Chat history
@@ -56,7 +57,7 @@ class MinimaxClient:
         }
 
         payload = {
-            "model": "Minimax-m2.7",
+            "model": "abab6.5s-chat",
             "group_id": self.group_id,
             "messages": [{"role": "user", "content": prompt}],
             "stream": True
@@ -67,20 +68,31 @@ class MinimaxClient:
             headers=headers,
             json=payload,
             stream=True,
-            timeout=30
+            timeout=60
         )
 
-        for line in response.iter_lines():
-            if line:
-                data = line.decode("utf-8")
-                if data.startswith("data:"):
-                    content = self._parse_sse_data(data)
-                    if content:
-                        yield StreamChunk(
-                            content=content,
-                            done=False,
-                            references=None
-                        )
+        if response.status_code != 200:
+            raise Exception(f"Minimax API error: {response.status_code} - {response.text}")
+
+        # Use sseclient-py for proper SSE parsing
+        from sseclient import SSEClient
+
+        client = SSEClient(response)
+        for event in client.events():
+            if event.data:
+                try:
+                    data = json.loads(event.data)
+                    if "choices" in data and len(data["choices"]) > 0:
+                        delta = data["choices"][0].get("delta", {})
+                        content = delta.get("content", "")
+                        if content:
+                            yield StreamChunk(
+                                content=content,
+                                done=False,
+                                references=None
+                            )
+                except json.JSONDecodeError:
+                    continue
 
         yield StreamChunk(content="", done=True, references=references)
 
@@ -123,10 +135,3 @@ class MinimaxClient:
                 "content": chunk.get("parent_content", "")[:200]
             })
         return references
-
-    def _parse_sse_data(self, data: str) -> str:
-        """Parse SSE data line."""
-        try:
-            return data.replace("data:", "").strip()
-        except Exception:
-            return ""

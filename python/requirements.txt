@@ -18,8 +18,9 @@ sentence-transformers>=2.2.2
 fastapi>=0.109.0
 uvicorn>=0.27.0
 
-# Minimax SDK
-minimax-python-sdk>=0.1.0
+# HTTP client and SSE parsing
+requests>=2.31.0
+sseclient-py>=1.8.0
 
 # Utilities
 python-dotenv>=1.0.0
