@@ -1,7 +1,7 @@
 """Minimax m2.7 LLM client with native HTTP requests and SSE streaming."""
 import os
 import json
-from typing import Generator, Optional, Any
+from typing import Generator, Optional
 from dataclasses import dataclass
 
 
@@ -79,20 +79,42 @@ class MinimaxClient:
 
         client = SSEClient(response)
         for event in client.events():
-            if event.data:
-                try:
-                    data = json.loads(event.data)
-                    if "choices" in data and len(data["choices"]) > 0:
-                        delta = data["choices"][0].get("delta", {})
-                        content = delta.get("content", "")
-                        if content:
-                            yield StreamChunk(
-                                content=content,
-                                done=False,
-                                references=None
-                            )
-                except json.JSONDecodeError:
+            # Skip empty data or [DONE] sentinel
+            if not event.data or event.data.strip() == "[DONE]":
+                continue
+
+            try:
+                data = json.loads(event.data)
+
+                # Ensure data is a dict and choices exists
+                if not isinstance(data, dict):
+                    print(f"[Minimax] Warning: received non-dict data: {type(data)}")
                     continue
+
+                choices = data.get("choices")
+                if not choices or not isinstance(choices, list) or len(choices) == 0:
+                    print(f"[Minimax] Warning: choices missing or empty in data: {data}")
+                    continue
+
+                delta = choices[0].get("delta", {})
+                if not isinstance(delta, dict):
+                    print(f"[Minimax] Warning: delta is not a dict: {type(delta)}")
+                    continue
+
+                content = delta.get("content", "")
+                if content:
+                    yield StreamChunk(
+                        content=content,
+                        done=False,
+                        references=None
+                    )
+            except json.JSONDecodeError:
+                # Skip malformed JSON (e.g., partial data)
+                print(f"[Minimax] Warning: JSON decode failed for: {event.data[:100]}")
+                continue
+            except Exception as e:
+                print(f"[Minimax] Warning: Unexpected error processing event: {e}")
+                continue
 
         yield StreamChunk(content="", done=True, references=references)
 
