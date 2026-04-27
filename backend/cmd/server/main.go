@@ -30,7 +30,7 @@ func main() {
 	r := gin.Default()
 
 	docsHandler := handler.NewDocsHandler()
-	chatHandler := handler.NewChatHandler()
+	chatHandler := handler.NewChatHandler(cfg.PythonHost, cfg.PythonPort)
 
 	api := r.Group("/api/v1")
 	{

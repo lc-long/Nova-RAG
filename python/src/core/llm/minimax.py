@@ -85,15 +85,15 @@ class MinimaxClient:
         yield StreamChunk(content="", done=True, references=references)
 
     def _build_context_prompt(self, chunks: list[dict]) -> str:
-        """Build context section of prompt."""
+        """Build context section of prompt with [N] citation format."""
         if not chunks:
             return "No relevant documents found."
 
         context_parts = []
         for i, chunk in enumerate(chunks, 1):
-            doc_name = chunk.get("doc_name", "Unknown")
+            doc_id = chunk.get("doc_id", "Unknown")
             content = chunk.get("parent_content", chunk.get("child_content", ""))
-            context_parts.append(f"[{i}] Source: {doc_name}\n{content}")
+            context_parts.append(f"[{i}] Document: {doc_id}\n{content}")
 
         return "\n\n---\n\n".join(context_parts)
 
@@ -112,11 +112,13 @@ class MinimaxClient:
 ## 用户问题"""
 
     def _build_references(self, chunks: list[dict]) -> list[dict]:
-        """Build references list WITHOUT <cite> tags."""
+        """Build references list WITHOUT <cite> tags - using [N] format."""
         references = []
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks, 1):
             references.append({
-                "source_doc": chunk.get("doc_name", "Unknown"),
+                "index": i,
+                "doc_id": chunk.get("doc_id", "Unknown"),
+                "source_doc": chunk.get("doc_id", "Unknown"),
                 "page_number": chunk.get("page_number", 0),
                 "content": chunk.get("parent_content", "")[:200]
             })
