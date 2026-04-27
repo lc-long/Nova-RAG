@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { Send, Bot, User, ChevronRight } from 'lucide-react'
+import toast from 'react-hot-toast'
+import { Send, Bot, User, ChevronRight, Loader2 } from 'lucide-react'
 
 interface ChatAreaProps {
   currentDoc: string | null
@@ -113,6 +114,7 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
         }
       }
     } catch (error) {
+      toast.error('网络错误：无法连接到 Go 后端服务器')
       setMessages(prev => {
         const updated = [...prev]
         const lastMsg = updated[updated.length - 1]
@@ -194,8 +196,17 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
             disabled={streaming || !input.trim()}
             className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
           >
-            <Send className="w-4 h-4" />
-            {streaming ? '生成中...' : '发送'}
+            {streaming ? (
+              <>
+                <Loader2 className="w-4 h-4 animate-spin" />
+                生成中...
+              </>
+            ) : (
+              <>
+                <Send className="w-4 h-4" />
+                发送
+              </>
+            )}
           </button>
         </div>
       </form>
