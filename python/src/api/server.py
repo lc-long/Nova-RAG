@@ -4,6 +4,7 @@ import json
 import uuid
 from typing import Optional
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -19,6 +20,7 @@ from ..core.retriever.chroma import ChromaRetriever
 from ..core.storage.vector_store import VectorStore
 from ..core.llm.minimax import MinimaxClient, Message
 
+load_dotenv()
 
 app = FastAPI(title="Lumina Insight AI Service")
 
@@ -45,11 +47,13 @@ class QueryRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     global vector_store, embedder, retriever, chunker, llm_client
+    print("[Lumina Insight AI Service] Initializing components...")
     vector_store = VectorStore(persist_directory="./vector_db")
     embedder = SentenceTransformerEmbedder()
     retriever = ChromaRetriever(vector_store, embedder)
     chunker = ParentChildChunker()
     llm_client = MinimaxClient()
+    print("[Lumina Insight AI Service] All components initialized successfully!")
 
 
 @app.post("/process_query")
@@ -108,4 +112,5 @@ async def upload_document(file: UploadFile = File(...)):
 
 
 if __name__ == "__main__":
+    print("[Lumina Insight AI Service] Starting server on http://0.0.0.0:5000")
     uvicorn.run(app, host="0.0.0.0", port=5000)
