@@ -131,9 +131,11 @@ async def process_query(request: QueryRequest):
     def generate():
         for chunk in llm_client.stream_chat(messages, context_chunks):
             if chunk.done:
-                yield f"data: {json.dumps({'done': True, 'references': chunk.references})}\n\n"
+                data = json.dumps({"done": True, "references": chunk.references})
             else:
-                yield f"data: {json.dumps({'content': chunk.content})}\n\n"
+                data = json.dumps({"content": chunk.content})
+            print(f"[Server] SSE chunk: {data[:80]}...")
+            yield f"data: {data}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

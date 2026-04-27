@@ -57,9 +57,10 @@ func (h *ChatHandler) Completions(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
+	c.Writer.Header().Set("Content-Type", "text/event-stream")
+	c.Writer.Header().Set("Cache-Control", "no-cache")
+	c.Writer.Header().Set("Connection", "keep-alive")
+	c.Writer.Header().Set("X-Accel-Buffering", "no")
 
 	flusher, ok := c.Writer.(http.Flusher)
 	if !ok {
@@ -67,17 +68,21 @@ func (h *ChatHandler) Completions(c *gin.Context) {
 		return
 	}
 
+	reader := resp.Body
+	buf := make([]byte, 1024)
 	for {
-		buf := make([]byte, 4096)
-		n, err := resp.Body.Read(buf)
+		n, err := reader.Read(buf)
 		if n > 0 {
-			c.Writer.Write(buf[:n])
-			flusher.Flush()
-		}
-		if err == io.EOF {
-			break
+			_, writeErr := c.Writer.Write(buf[:n])
+			if writeErr == nil {
+				flusher.Flush()
+			}
+			fmt.Printf("[ChatHandler] Proxy bytes: %d\n", n)
 		}
 		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("[ChatHandler] Read error: %v\n", err)
+			}
 			break
 		}
 	}
