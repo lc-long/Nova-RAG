@@ -1,6 +1,6 @@
 # LangChain for text splitting
 langchain>=0.1.0
-langchain-text-splitners>=0.0.2
+langchain-text-splitters>=0.0.2
 
 # Document parsing
 pypdf>=3.17.0
