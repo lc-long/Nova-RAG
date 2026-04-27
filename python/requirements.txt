@@ -1,21 +1,23 @@
-# LangChain and community packages
-langchain>=0.1.0
-langchain-community>=0.0.20
+# Document parsing
+pypdf>=3.17.0
+pdfplumber>=0.10.3
+python-docx>=1.1.0
+markdown>=3.5.2
 
 # ChromaDB vector store
 chromadb>=0.4.22
 
-# Minimax SDK
-minimax-python-sdk>=0.1.0
-
-# Document parsing
-pypdf>=3.17.0
-python-docx>=1.1.0
-markdown>=3.5.2
-
 # Embedding model
 sentence-transformers>=2.2.2
+
+# FastAPI and server
+fastapi>=0.109.0
+uvicorn>=0.27.0
+
+# Minimax SDK
+minimax-python-sdk>=0.1.0
 
 # Utilities
 python-dotenv>=1.0.0
 pydantic>=2.5.0
+pydantic-settings>=2.1.0

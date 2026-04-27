@@ -1,6 +1,24 @@
-from fastapi import FastAPI
+"""FastAPI server for Lumina Insight AI Service."""
+import os
+import json
+import uuid
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+
 import uvicorn
+
+from ..core.chunker.parent_child import ParentChildChunker
+from ..core.chunker.pdf_parser import extract_text_from_pdf
+from ..core.chunker.docx_parser import extract_text_from_docx
+from ..core.embedder.sentence_transformer import SentenceTransformerEmbedder
+from ..core.retriever.chroma import ChromaRetriever
+from ..core.storage.vector_store import VectorStore
+from ..core.llm.minimax import MinimaxClient, Message
+
 
 app = FastAPI(title="Lumina Insight AI Service")
 
@@ -12,15 +30,81 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+vector_store: Optional[VectorStore] = None
+embedder: Optional[SentenceTransformerEmbedder] = None
+retriever: Optional[ChromaRetriever] = None
+chunker: Optional[ParentChildChunker] = None
+llm_client: Optional[MinimaxClient] = None
+
+
+class QueryRequest(BaseModel):
+    messages: list[dict]
+    stream: bool = True
+
+
+@app.on_event("startup")
+async def startup():
+    global vector_store, embedder, retriever, chunker, llm_client
+    vector_store = VectorStore(persist_directory="./vector_db")
+    embedder = SentenceTransformerEmbedder()
+    retriever = ChromaRetriever(vector_store, embedder)
+    chunker = ParentChildChunker()
+    llm_client = MinimaxClient()
+
 
 @app.post("/process_query")
-async def process_query():
-    return {"status": "stub"}
+async def process_query(request: QueryRequest):
+    """Process a RAG query and return streaming response."""
+    if not llm_client or not retriever:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+
+    messages = [Message(**m) for m in request.messages]
+    last_query = messages[-1].content if messages else ""
+
+    context_chunks = retriever.retrieve(last_query, top_k=5)
+
+    if not context_chunks:
+        context_chunks = []
+
+    def generate():
+        for chunk in llm_client.stream_chat(messages, context_chunks):
+            if chunk.done:
+                yield f"data: {json.dumps({'done': True, 'references': chunk.references})}\n\n"
+            else:
+                yield f"data: {json.dumps({'content': chunk.content})}\n\n"
+
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 
 @app.post("/upload")
-async def upload():
-    return {"status": "stub"}
+async def upload_document(file: UploadFile = File(...)):
+    """Upload and process a document."""
+    if not chunker or not vector_store or not embedder:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+
+    temp_path = f"/tmp/{file.filename}"
+    with open(temp_path, "wb") as f:
+        content = await file.read()
+        f.write(content)
+
+    try:
+        if file.filename.endswith(".pdf"):
+            text = extract_text_from_pdf(temp_path)
+        elif file.filename.endswith(".docx"):
+            text = extract_text_from_docx(temp_path)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+
+    doc_id = str(uuid.uuid4())
+    chunks = chunker.chunk(text, doc_id)
+
+    embeddings = embedder.embed([c.content for c in chunks])
+    vector_store.add_chunks(chunks, embeddings)
+
+    return {"doc_id": doc_id, "status": "processed", "chunks": len(chunks)}
 
 
 if __name__ == "__main__":
