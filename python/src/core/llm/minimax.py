@@ -28,7 +28,7 @@ class MinimaxClient:
     ):
         self.api_key = api_key or os.getenv("MINIMAX_API_KEY", "")
         self.group_id = group_id or os.getenv("MINIMAX_GROUP_ID", "")
-        self.base_url = "https://api.minimax.chat/v1"
+        self.base_url = "https://api.minimaxi.com/v1"
 
     def stream_chat(
         self,
@@ -57,7 +57,7 @@ class MinimaxClient:
         }
 
         payload = {
-            "model": "minimax-text-01",
+            "model": "MiniMax-M2.7",
             "group_id": self.group_id,
             "messages": [{"role": "user", "content": prompt}],
             "stream": True

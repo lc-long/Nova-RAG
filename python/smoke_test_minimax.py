@@ -27,7 +27,7 @@ headers = {
     "Content-Type": "application/json"
 }
 payload = {
-    "model": "minimax-text-01",
+    "model": "MiniMax-M2.7",
     "group_id": client.group_id,
     "messages": [{"role": "user", "content": "你好，介绍你自己"}],
     "stream": True
@@ -42,7 +42,7 @@ non_resp = requests.post(
     timeout=30
 )
 print(f"[Non-streaming] Status: {non_resp.status_code}")
-print(f"[Non-streaming] Body: {non_resp.text[:400]}")
+print(f"[Non-streaming] Body: {non_resp.content.decode('utf-8', errors='replace')[:400]}")
 
 print("\n[Raw Test] Fetching raw SSE from API...")
 response = requests.post(
@@ -59,7 +59,8 @@ for i, line in enumerate(response.iter_lines()):
     if not line:
         continue
     decoded = line.decode('utf-8', errors='replace')
-    print(f"  [line {i:3d}] {decoded}")
+    safe = decoded.encode('ascii', 'replace').decode('ascii')
+    print(f"  [line {i:3d}] {safe[:200]}")
     if i > 50:
         print("  ... (truncated)")
         break
@@ -72,7 +73,8 @@ print("-" * 40)
 
 for i, chunk in enumerate(client.stream_chat(messages, [])):
     if chunk.content:
-        print(f"  [{i}] {chunk.content[:100]}")
+        safe = chunk.content.encode('ascii', 'replace').decode('ascii')
+        print(f"  [{i}] {safe[:120]}")
     else:
         print(f"  [{i}] done=True, refs={chunk.references is not None}")
 
