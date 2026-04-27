@@ -19,7 +19,21 @@
       "Bash(curl -s http://localhost:5174/src/App.tsx)",
       "Bash(curl -s http://localhost:5174/src/index.css)",
       "Bash(curl -s http://localhost:5174/src/components/Sidebar.tsx)",
-      "Bash(curl -s http://localhost:5174)"
+      "Bash(curl -s http://localhost:5174)",
+      "Bash(python -m src.api.server)",
+      "Bash(python *)",
+      "Bash(/c/Users/a/AppData/Local/Microsoft/WindowsApps/python.exe *)",
+      "Bash(node *)",
+      "Bash(tee /d/code/ai/rag/python/test_output.txt)",
+      "Bash(python3 *)",
+      "Bash(/c/Users/a/AppData/Local/Microsoft/WindowsApps/python *)",
+      "Bash(ls /c/Python*)",
+      "Read(//c/Users/a/AppData/Local/Programs/**)",
+      "Bash(where python *)",
+      "Bash(where py *)",
+      "Bash(where conda *)",
+      "Bash(cmd.exe *)",
+      "Bash(powershell.exe *)"
     ]
   }
 }

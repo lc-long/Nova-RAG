@@ -1,27 +1,71 @@
-"""FastAPI server for Lumina Insight AI Service."""
+"""FastAPI server for Lumina Insight AI Service - DIAGNOSTIC VERSION."""
 import os
+import sys
 import json
 import uuid
+import traceback
 from typing import Optional
 
-from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+print("[DEBUG] Starting server.py...")
 
-import uvicorn
+try:
+    print("[DEBUG] Importing dotenv...")
+    from dotenv import load_dotenv
+    print("[DEBUG] dotenv imported successfully")
 
-from ..core.chunker.parent_child import ParentChildChunker
-from ..core.chunker.pdf_parser import extract_text_from_pdf
-from ..core.chunker.docx_parser import extract_text_from_docx
-from ..core.embedder.sentence_transformer import SentenceTransformerEmbedder
-from ..core.retriever.chroma import ChromaRetriever
-from ..core.storage.vector_store import VectorStore
-from ..core.llm.minimax import MinimaxClient, Message
+    print("[DEBUG] Loading .env file...")
+    load_dotenv()
+    print(f"[DEBUG] MINIMAX_API_KEY loaded: {bool(os.getenv('MINIMAX_API_KEY'))}")
+    print(f"[DEBUG] MINIMAX_GROUP_ID loaded: {bool(os.getenv('MINIMAX_GROUP_ID'))}")
 
-load_dotenv()
+    print("[DEBUG] Importing FastAPI and dependencies...")
+    from fastapi import FastAPI, HTTPException, UploadFile, File
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import StreamingResponse
+    from pydantic import BaseModel
+    print("[DEBUG] FastAPI imports successful")
 
+    print("[DEBUG] Importing uvicorn...")
+    import uvicorn
+    print("[DEBUG] uvicorn imported successfully")
+
+    print("[DEBUG] Importing ChromaDB...")
+    import chromadb
+    from chromadb.config import Settings
+    print("[DEBUG] ChromaDB imported successfully")
+
+    print("[DEBUG] Importing sentence_transformers...")
+    from sentence_transformers import SentenceTransformer
+    print("[DEBUG] sentence_transformers imported successfully")
+
+    print("[DEBUG] Importing LangChain text splitter...")
+    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    print("[DEBUG] LangChain imports successful")
+
+    print("[DEBUG] Importing project modules...")
+    from ..core.chunker.parent_child import ParentChildChunker
+    print("[DEBUG] ParentChildChunker imported")
+    from ..core.chunker.pdf_parser import extract_text_from_pdf
+    print("[DEBUG] pdf_parser imported")
+    from ..core.chunker.docx_parser import extract_text_from_docx
+    print("[DEBUG] docx_parser imported")
+    from ..core.embedder.sentence_transformer import SentenceTransformerEmbedder
+    print("[DEBUG] SentenceTransformerEmbedder imported")
+    from ..core.retriever.chroma import ChromaRetriever
+    print("[DEBUG] ChromaRetriever imported")
+    from ..core.storage.vector_store import VectorStore
+    print("[DEBUG] VectorStore imported")
+    from ..core.llm.minimax import MinimaxClient, Message
+    print("[DEBUG] MinimaxClient imported")
+
+    print("[DEBUG] All imports completed successfully!")
+
+except Exception as e:
+    print(f"[ERROR] Exception during import/setup: {e}")
+    traceback.print_exc()
+    sys.exit(1)
+
+print("[DEBUG] Creating FastAPI app...")
 app = FastAPI(title="Lumina Insight AI Service")
 
 app.add_middleware(
@@ -48,12 +92,21 @@ class QueryRequest(BaseModel):
 async def startup():
     global vector_store, embedder, retriever, chunker, llm_client
     print("[Lumina Insight AI Service] Initializing components...")
-    vector_store = VectorStore(persist_directory="./vector_db")
-    embedder = SentenceTransformerEmbedder()
-    retriever = ChromaRetriever(vector_store, embedder)
-    chunker = ParentChildChunker()
-    llm_client = MinimaxClient()
-    print("[Lumina Insight AI Service] All components initialized successfully!")
+    try:
+        vector_store = VectorStore(persist_directory="./vector_db")
+        print("[DEBUG] VectorStore initialized")
+        embedder = SentenceTransformerEmbedder()
+        print("[DEBUG] Embedder initialized")
+        retriever = ChromaRetriever(vector_store, embedder)
+        print("[DEBUG] Retriever initialized")
+        chunker = ParentChildChunker()
+        print("[DEBUG] Chunker initialized")
+        llm_client = MinimaxClient()
+        print("[DEBUG] LLM client initialized")
+        print("[Lumina Insight AI Service] All components initialized successfully!")
+    except Exception as e:
+        print(f"[ERROR] Exception during startup: {e}")
+        traceback.print_exc()
 
 
 @app.post("/process_query")
@@ -113,4 +166,8 @@ async def upload_document(file: UploadFile = File(...)):
 
 if __name__ == "__main__":
     print("[Lumina Insight AI Service] Starting server on http://0.0.0.0:5000")
-    uvicorn.run(app, host="0.0.0.0", port=5000)
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=5000)
+    except Exception as e:
+        print(f"[ERROR] Exception during uvicorn.run: {e}")
+        traceback.print_exc()
