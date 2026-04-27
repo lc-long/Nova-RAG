@@ -85,6 +85,7 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
         buffer = lines.pop() || ''
 
         for (const line of lines) {
+          if (!line.trim()) continue
           if (line.startsWith('data:')) {
             const data = line.slice(5).trim()
             if (data === '[DONE]') continue
