@@ -39,7 +39,7 @@ try:
     print("[DEBUG] sentence_transformers imported successfully")
 
     print("[DEBUG] Importing LangChain text splitter...")
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
     print("[DEBUG] LangChain imports successful")
 
     print("[DEBUG] Importing project modules...")
