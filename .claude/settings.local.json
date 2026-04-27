@@ -13,7 +13,11 @@
       "Bash(npm create *)",
       "Bash(npm install *)",
       "Bash(npx tailwindcss *)",
-      "Bash(npm run *)"
+      "Bash(npm run *)",
+      "Bash(curl -s http://localhost:5173)",
+      "Bash(pkill -f \"vite\")",
+      "Bash(curl -s http://localhost:5174/src/App.tsx)",
+      "Bash(curl -s http://localhost:5174/src/index.css)"
     ]
   }
 }
