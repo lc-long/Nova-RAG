@@ -79,14 +79,12 @@ class MinimaxClient:
 
         client = SSEClient(response)
         for event in client.events():
-            # Skip empty data or [DONE] sentinel
             if not event.data or event.data.strip() == "[DONE]":
                 continue
 
             try:
                 data = json.loads(event.data)
 
-                # Ensure data is a dict and choices exists
                 if not isinstance(data, dict):
                     continue
 
@@ -94,22 +92,36 @@ class MinimaxClient:
                 if not choices or not isinstance(choices, list) or len(choices) == 0:
                     continue
 
-                delta = choices[0].get("delta", {})
+                choice = choices[0]
+                delta = choice.get("delta", {})
                 if not isinstance(delta, dict):
                     continue
 
+                reasoning = delta.get("reasoning_content", "")
                 content = delta.get("content", "")
+
+                if reasoning:
+                    yield StreamChunk(
+                        content=f"<think>{reasoning}</think>",
+                        done=False,
+                        references=None
+                    )
+
                 if content:
                     yield StreamChunk(
                         content=content,
                         done=False,
                         references=None
                     )
+
+                finish_reason = choice.get("finish_reason")
+                if finish_reason:
+                    yield StreamChunk(content="", done=True, references=references)
+                    return
+
             except json.JSONDecodeError:
-                # Skip malformed JSON (e.g., partial data)
                 continue
             except Exception:
-                # Skip other processing errors silently
                 continue
 
         yield StreamChunk(content="", done=True, references=references)

@@ -156,7 +156,19 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
                     : 'bg-white shadow-sm border border-gray-200 text-gray-800'
                 }`}>
                   <div className="prose prose-sm max-w-none">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <ReactMarkdown
+                      components={{
+                        think: ({children}) => (
+                          <div className="bg-gray-100 text-gray-600 text-sm px-3 py-2 rounded-lg my-2 italic border-l-4 border-gray-300">
+                            <div className="flex items-center gap-1 mb-1 font-medium not-italic text-gray-500">
+                              <span>🤔</span> 思考中...
+                            </div>
+                            {children}
+                          </div>
+                        ),
+                        p: ({children}) => <p className="mb-2">{children}</p>,
+                      }}
+                    >{msg.content}</ReactMarkdown>
                   </div>
                 </div>
 
