@@ -1,12 +1,13 @@
 """Parent-child chunking strategy for RAG.
 
 切分逻辑：
-1. Parent chunk: 按段落/固定长度切分，保留完整语义上下文
+1. Parent chunk: 使用 RecursiveCharacterTextSplitter 按固定长度切分，保留完整语义上下文
 2. Child chunk: 从 parent 中进一步切分细小片段，提高检索命中率
 3. 存储时建立 parent_id 关联，检索时先找 child 再找 parent
 """
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, list
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 
 
 @dataclass
@@ -21,7 +22,7 @@ class Chunk:
 
 
 class ParentChildChunker:
-    """Parent-child chunking with configurable sizes."""
+    """Parent-child chunking with configurable sizes using RecursiveCharacterTextSplitter."""
 
     def __init__(
         self,
@@ -33,14 +34,18 @@ class ParentChildChunker:
         self.child_chunk_size = child_chunk_size
         self.overlap = overlap
 
+        self.text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=parent_chunk_size,
+            chunk_overlap=overlap,
+            separators=["\n\n", "\n", "。", "！", "？", ". ", " ", ""]
+        )
+
     def chunk(self, text: str, doc_id: str) -> list[Chunk]:
         """Split text into parent-child chunks."""
         chunks = []
 
-        # First create parent chunks
         parent_chunks = self._create_parent_chunks(text, doc_id)
 
-        # Then create child chunks from each parent
         for parent in parent_chunks:
             children = self._create_child_chunks(parent, doc_id)
             chunks.append(parent)
@@ -49,43 +54,21 @@ class ParentChildChunker:
         return chunks
 
     def _create_parent_chunks(self, text: str, doc_id: str) -> list[Chunk]:
-        """Create parent chunks from text."""
+        """Create parent chunks using RecursiveCharacterTextSplitter."""
+        texts = self.text_splitter.split_text(text)
         chunks = []
-        paragraphs = text.split("\n\n")
-        current_parent = []
-        current_size = 0
 
-        for para in paragraphs:
-            para_size = len(para)
-            if current_size + para_size > self.parent_chunk_size and current_parent:
-                parent_id = f"{doc_id}_parent_{len(chunks)}"
-                content = "\n\n".join(current_parent)
+        for i, content in enumerate(texts):
+            if content.strip():
+                parent_id = f"{doc_id}_parent_{i}"
                 chunks.append(Chunk(
                     chunk_id=parent_id,
                     content=content,
                     doc_id=doc_id,
                     chunk_type="parent",
                     parent_id=None,
-                    order=len(chunks)
+                    order=i
                 ))
-                current_parent = []
-                current_size = 0
-
-            current_parent.append(para)
-            current_size += para_size
-
-        # Handle remaining content
-        if current_parent:
-            parent_id = f"{doc_id}_parent_{len(chunks)}"
-            content = "\n\n".join(current_parent)
-            chunks.append(Chunk(
-                chunk_id=parent_id,
-                content=content,
-                doc_id=doc_id,
-                chunk_type="parent",
-                parent_id=None,
-                order=len(chunks)
-            ))
 
         return chunks
 
@@ -94,6 +77,7 @@ class ParentChildChunker:
         chunks = []
         text = parent.content
         start = 0
+        child_index = 0
 
         while start < len(text):
             end = min(start + self.child_chunk_size, len(text))
@@ -106,15 +90,16 @@ class ParentChildChunker:
 
             child_content = text[start:end].strip()
             if child_content:
-                child_id = f"{doc_id}_child_{len(chunks)}"
+                child_id = f"{doc_id}_child_{parent.order}_{child_index}"
                 chunks.append(Chunk(
                     chunk_id=child_id,
                     content=child_content,
                     doc_id=doc_id,
                     chunk_type="child",
                     parent_id=parent.chunk_id,
-                    order=len(chunks)
+                    order=child_index
                 ))
+                child_index += 1
 
             start = end - self.overlap if end < len(text) else len(text)
 

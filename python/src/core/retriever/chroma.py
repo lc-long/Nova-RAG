@@ -3,7 +3,7 @@ from typing import Optional
 
 
 class ChromaRetriever:
-    """ChromaDB retriever with parent-child support."""
+    """ChromaDB retriever with parent-child support and deduplication."""
 
     def __init__(
         self,
@@ -14,12 +14,17 @@ class ChromaRetriever:
         self.embedder = embedder
 
     def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
-        """Retrieve relevant chunks and their parent contexts."""
+        """Retrieve relevant chunks and their parent contexts.
+
+        Uses Set to deduplicate by parent_id so each parent appears only once.
+        """
         query_embedding = self.embedder.embed([query])[0]
 
         results = self.vector_store.query(query_embedding, top_k)
 
         chunks_with_context = []
+        seen_parent_ids = set()
+
         for i in range(len(results["ids"][0])):
             chunk_id = results["ids"][0][i]
             metadata = results["metadatas"][0][i]
@@ -27,6 +32,11 @@ class ChromaRetriever:
 
             if metadata["chunk_type"] == "child":
                 parent_id = metadata["parent_id"]
+
+                if parent_id in seen_parent_ids:
+                    continue
+                seen_parent_ids.add(parent_id)
+
                 parent_results = self.vector_store.get_by_parent(parent_id)
                 if parent_results["documents"]:
                     chunks_with_context.append({
