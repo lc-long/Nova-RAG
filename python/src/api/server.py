@@ -15,6 +15,11 @@ try:
 
     print("[DEBUG] Loading .env file...")
     load_dotenv()
+
+    # Configure HuggingFace mirror for Chinese network environment
+    os.environ["HF_ENDPOINT"] = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
+    print(f"[DEBUG] HF_ENDPOINT set to: {os.environ['HF_ENDPOINT']}")
+
     print(f"[DEBUG] MINIMAX_API_KEY loaded: {bool(os.getenv('MINIMAX_API_KEY'))}")
     print(f"[DEBUG] MINIMAX_GROUP_ID loaded: {bool(os.getenv('MINIMAX_GROUP_ID'))}")
 
