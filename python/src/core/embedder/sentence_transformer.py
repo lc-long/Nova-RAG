@@ -12,17 +12,18 @@ class SentenceTransformerEmbedder(Embedder):
 
     _instance: Optional["SentenceTransformerEmbedder"] = None
     _model: Optional[Any] = None
-    _model_name: str = "all-MiniLM-L6-v2"
+    _model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"
     _load_error: Optional[Exception] = None
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
+    def __init__(self, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2"):
         pass
 
     @classmethod
-    def get_instance(cls, model_name: str = "all-MiniLM-L6-v2") -> "SentenceTransformerEmbedder":
+    def get_instance(cls, model_name: str = "paraphrase-multilingual-MiniLM-L12-v2") -> "SentenceTransformerEmbedder":
         """Get singleton instance, loading model only once."""
         if cls._instance is None:
-            cls._model_name = model_name
+            if model_name and model_name != "paraphrase-multilingual-MiniLM-L12-v2":
+                cls._model_name = model_name
             cls._instance = cls()
             cls._ensure_model_loaded()
         return cls._instance

@@ -38,7 +38,23 @@
       "Bash(uv python *)",
       "Bash(uv venv *)",
       "Bash(uv pip *)",
-      "Bash(uv run *)"
+      "Bash(uv run *)",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "Bash(iconv -f utf-8 -t utf-8 //IGNORE)",
+      "Bash(ls -la vector_db/)",
+      "Bash(ls -la vector_db/*.sqlite)",
+      "Bash(curl -s http://localhost:5000/docs)",
+      "Bash(echo \"Test content for reimbursement PDF\")",
+      "Bash(curl -s -X POST http://localhost:5000/upload -F \"file=@/tmp/test.txt\")",
+      "Bash(curl -s -X POST http://localhost:5000/upload -F \"file=@/tmp/test_reimbursement.docx\")",
+      "Bash(pkill -f \"python -m src.api.server\")",
+      "Bash(rm -f vector_db/chroma.sqlite3)",
+      "Bash(mv vector_db vector_db_old)",
+      "Bash(mkdir -p vector_db)",
+      "Bash(netstat -ano)",
+      "Bash(taskkill /F /PID 19040)",
+      "Bash(taskkill /F /PID 24032)",
+      "Bash(taskkill //F //PID 24032)"
     ]
   }
 }
