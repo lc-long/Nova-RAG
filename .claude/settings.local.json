@@ -33,7 +33,12 @@
       "Bash(where py *)",
       "Bash(where conda *)",
       "Bash(cmd.exe *)",
-      "Bash(powershell.exe *)"
+      "Bash(powershell.exe *)",
+      "Bash(scoop install *)",
+      "Bash(uv python *)",
+      "Bash(uv venv *)",
+      "Bash(uv pip *)",
+      "Bash(uv run *)"
     ]
   }
 }

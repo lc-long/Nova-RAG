@@ -6,8 +6,8 @@
 3. 存储时建立 parent_id 关联，检索时先找 child 再找 parent
 """
 from dataclasses import dataclass
-from typing import Optional, list
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from typing import Optional
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
 @dataclass

@@ -83,7 +83,7 @@ def main():
         ("uvicorn", "uvicorn"),
         ("chromadb", "chromadb"),
         ("sentence_transformers", "sentence-transformers"),
-        ("langchain.text_splitter", "langchain"),
+        ("langchain_text_splitters", "langchain-text-splitters"),
         ("requests", "requests"),
         ("sseclient", "sseclient-py"),
         ("pydantic", "pydantic"),
