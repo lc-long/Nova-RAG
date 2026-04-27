@@ -12,16 +12,18 @@ class SentenceTransformerEmbedder(Embedder):
 
     _instance: Optional["SentenceTransformerEmbedder"] = None
     _model: Optional[Any] = None
+    _model_name: str = "all-MiniLM-L6-v2"
     _load_error: Optional[Exception] = None
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
-        self.model_name = model_name
+        pass
 
     @classmethod
     def get_instance(cls, model_name: str = "all-MiniLM-L6-v2") -> "SentenceTransformerEmbedder":
         """Get singleton instance, loading model only once."""
         if cls._instance is None:
-            cls._instance = cls(model_name)
+            cls._model_name = model_name
+            cls._instance = cls()
             cls._ensure_model_loaded()
         return cls._instance
 
@@ -34,30 +36,30 @@ class SentenceTransformerEmbedder(Embedder):
         if cls._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-                print(f"[Embedding] Downloading model {cls._instance.model_name} from {os.environ.get('HF_ENDPOINT', 'huggingface.co')}...")
-                cls._model = SentenceTransformer(cls._instance.model_name)
-                print(f"[Embedding] Model {cls._instance.model_name} loaded successfully")
+                print(f"[Embedding] Downloading model {cls._model_name} from {os.environ.get('HF_ENDPOINT', 'huggingface.co')}...")
+                cls._model = SentenceTransformer(cls._model_name)
+                print(f"[Embedding] Model {cls._model_name} loaded successfully")
             except Exception as e:
                 cls._load_error = e
-                print(f"[Embedding] Failed to load model {cls._instance.model_name}: {e}")
+                print(f"[Embedding] Failed to load model {cls._model_name}: {e}")
                 raise
 
     @property
     def model(self):
         """Get model, raising any load error."""
-        if self._load_error is not None:
-            raise self._load_error
-        if self._model is None:
-            self._ensure_model_loaded()
-        return self._model
+        if type(self)._load_error is not None:
+            raise type(self)._load_error
+        if type(self)._model is None:
+            type(self)._ensure_model_loaded()
+        return type(self)._model
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """Generate embeddings for texts."""
         if not texts:
             return []
 
-        if self._load_error is not None:
-            raise self._load_error
+        if type(self)._load_error is not None:
+            raise type(self)._load_error
 
         try:
             embeddings = self.model.encode(texts, convert_to_numpy=True)
