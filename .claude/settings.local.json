@@ -8,7 +8,11 @@
       "Bash(go mod *)",
       "Bash(go env *)",
       "Skill(code-review:code-review)",
-      "Bash(go build *)"
+      "Bash(go build *)",
+      "Bash(python -m py_compile /d/code/ai/rag/python/src/api/server.py /d/code/ai/rag/python/src/core/chunker/parent_child.py /d/code/ai/rag/python/src/core/retriever/chroma.py /d/code/ai/rag/python/src/core/llm/minimax.py)",
+      "Bash(npm create *)",
+      "Bash(npm install *)",
+      "Bash(npx tailwindcss *)"
     ]
   }
 }
