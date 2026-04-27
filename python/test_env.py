@@ -20,8 +20,8 @@ try:
     print("OK: sentence_transformers")
 
     print("Importing langchain...")
-    from langchain.text_splitter import RecursiveCharacterTextSplitter
-    print("OK: langchain")
+    from langchain_text_splitters import RecursiveCharacterTextSplitter
+    print("OK: langchain-text-splitters")
 
     print("Loading .env...")
     load_dotenv()
