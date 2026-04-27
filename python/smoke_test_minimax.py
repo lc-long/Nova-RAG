@@ -1,20 +1,27 @@
-"""Smoke test for Minimax SSE streaming - simulates Python-side validation."""
+"""Smoke test for Minimax SSE streaming - verifies real API connectivity."""
 import os
-import sys
-import json
 
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+# Load .env before any other imports
+from dotenv import load_dotenv
+load_dotenv(os.path.join(os.path.dirname(__file__), '.env'))
+
+os.environ["HF_ENDPOINT"] = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
 
 print("=" * 60)
 print("Minimax SSE Streaming Smoke Test")
 print("=" * 60)
 
+print(f"[Config] MINIMAX_API_KEY set: {bool(os.getenv('MINIMAX_API_KEY'))}")
+print(f"[Config] MINIMAX_GROUP_ID set: {bool(os.getenv('MINIMAX_GROUP_ID'))}")
+
 from src.core.llm.minimax import MinimaxClient, Message
 
-# Test raw response first
+# Test raw response
 import requests
 
 client = MinimaxClient()
+print(f"[Client] Base URL: {client.base_url}")
+
 headers = {
     "Authorization": f"Bearer {client.api_key}",
     "Content-Type": "application/json"
@@ -26,6 +33,17 @@ payload = {
     "stream": True
 }
 
+# Non-streaming test first
+print("\n[Non-streaming Test] Single shot...")
+non_resp = requests.post(
+    f"{client.base_url}/text/chatcompletion_v2",
+    headers=headers,
+    json={**payload, "stream": False},
+    timeout=30
+)
+print(f"[Non-streaming] Status: {non_resp.status_code}")
+print(f"[Non-streaming] Body: {non_resp.text[:400]}")
+
 print("\n[Raw Test] Fetching raw SSE from API...")
 response = requests.post(
     f"{client.base_url}/text/chatcompletion_v2",
@@ -36,25 +54,27 @@ response = requests.post(
 )
 
 print(f"[Raw] Status: {response.status_code}")
-print("[Raw] First 5 lines:")
+
 for i, line in enumerate(response.iter_lines()):
-    if i >= 10:
-        print("  ...")
+    if not line:
+        continue
+    decoded = line.decode('utf-8', errors='replace')
+    print(f"  [line {i:3d}] {decoded}")
+    if i > 50:
+        print("  ... (truncated)")
         break
-    print(f"  [{i}] {line[:120]}")
 
 response.close()
 
-print("\n[Smoke Test] Testing via MinimaxClient.stream_chat...")
+print("\n[Stream Test] Testing via MinimaxClient.stream_chat...")
 messages = [Message(role="user", content="你好，介绍你自己")]
-context_chunks = []
 print("-" * 40)
 
-for i, chunk in enumerate(client.stream_chat(messages, context_chunks)):
+for i, chunk in enumerate(client.stream_chat(messages, [])):
     if chunk.content:
-        print(f"[{i}] content: {chunk.content[:80]}...")
+        print(f"  [{i}] {chunk.content[:100]}")
     else:
-        print(f"[{i}] done=True, references={chunk.references is not None}")
+        print(f"  [{i}] done=True, refs={chunk.references is not None}")
 
 print("-" * 40)
-print("[Smoke Test] Stream completed")
+print("[Done]")
