@@ -48,6 +48,7 @@ func main() {
 
 	docsHandler := handler.NewDocsHandler(sqlDB, cfg.PythonHost, cfg.PythonPort)
 	chatHandler := handler.NewChatHandler(cfg.PythonHost, cfg.PythonPort)
+	systemHandler := handler.NewSystemHandler(sqlDB, cfg.PythonHost, cfg.PythonPort)
 
 	api := r.Group("/api/v1")
 	{
@@ -56,6 +57,8 @@ func main() {
 		api.DELETE("/docs/:id", docsHandler.Delete)
 
 		api.POST("/chat/completions", chatHandler.Completions)
+
+		api.POST("/system/reset", systemHandler.Reset)
 	}
 
 	log.Printf("Server starting on port %s", cfg.ServerPort)

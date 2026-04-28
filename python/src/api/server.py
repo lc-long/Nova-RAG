@@ -152,9 +152,10 @@ async def reset_db():
     if not vector_store:
         raise HTTPException(status_code=500, detail="Service not initialized")
     try:
-        vector_store.collection.delete(where={})
-        print("[ResetDB] All documents deleted from ChromaDB")
-        return {"status": "ok", "message": "All documents cleared"}
+        vector_store.client.delete_collection(name=vector_store.collection_name)
+        vector_store._collection = None
+        print("[ResetDB] Collection deleted")
+        return {"status": "ok", "message": "ChromaDB reset complete"}
     except Exception as e:
         print(f"[ResetDB] Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
