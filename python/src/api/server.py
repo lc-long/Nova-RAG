@@ -139,8 +139,13 @@ async def ingest_document(req: IngestRequest):
 
     doc_id = req.doc_id
     chunks = chunker.chunk(text, doc_id)
+    # Prefix each chunk content with source filename for semantic matching
+    prefix = f"[来源文件：{req.filename}]\n"
+    for chunk in chunks:
+        chunk.content = prefix + chunk.content
+
     embeddings = embedder.embed([c.content for c in chunks])
-    vector_store.add_chunks(chunks, embeddings)
+    vector_store.add_chunks(chunks, embeddings, source=req.filename)
 
     return {"doc_id": doc_id, "status": "processed", "chunks": len(chunks)}
 

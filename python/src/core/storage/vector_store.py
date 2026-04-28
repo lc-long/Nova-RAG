@@ -39,7 +39,7 @@ class VectorStore:
             )
         return self._collection
 
-    def add_chunks(self, chunks: list, embeddings: list[list[float]]) -> None:
+    def add_chunks(self, chunks: list, embeddings: list[list[float]], source: str = "") -> None:
         """Add chunks with their embeddings to the store."""
         if not chunks or not embeddings:
             return
@@ -52,7 +52,8 @@ class VectorStore:
                 "chunk_type": c.chunk_type,
                 "parent_id": c.parent_id or "",
                 "page_number": c.page_number or 0,
-                "order": c.order
+                "order": c.order,
+                "source": source,
             }
             for c in chunks
         ]

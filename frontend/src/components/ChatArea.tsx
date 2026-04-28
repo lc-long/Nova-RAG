@@ -21,6 +21,7 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const requestInFlight = useRef(false)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -32,7 +33,9 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!input.trim() || streaming) return
+    if (!input.trim() || streaming || requestInFlight.current) return
+
+    requestInFlight.current = true
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -94,9 +97,9 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
               const parsed = JSON.parse(data)
               if (parsed.content) {
                 setMessages(prev => {
-                  const updated = [...prev]
-                  const lastMsg = updated[updated.length - 1]
-                  lastMsg.content += parsed.content
+                  const updated = prev.map((m, i) =>
+                    i === prev.length - 1 ? { ...m, content: m.content + parsed.content } : m
+                  )
                   return updated
                 })
               }
@@ -116,15 +119,13 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
       }
     } catch (error) {
       toast.error('网络错误：无法连接到 Go 后端服务器')
-      setMessages(prev => {
-        const updated = [...prev]
-        const lastMsg = updated[updated.length - 1]
-        lastMsg.content = `错误：无法连接到后端服务 (${error})`
-        return updated
-      })
+      setMessages(prev => prev.map((m, i) =>
+        i === prev.length - 1 ? { ...m, content: `错误：无法连接到后端服务 (${error})` } : m
+      ))
+    } finally {
+      setStreaming(false)
+      requestInFlight.current = false
     }
-
-    setStreaming(false)
   }
 
   return (
