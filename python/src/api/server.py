@@ -145,6 +145,21 @@ async def ingest_document(req: IngestRequest):
     return {"doc_id": doc_id, "status": "processed", "chunks": len(chunks)}
 
 
+@app.post("/reset_db")
+async def reset_db():
+    """Clear all documents from ChromaDB (for testing)."""
+    global vector_store
+    if not vector_store:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+    try:
+        vector_store.collection.delete(where={})
+        print("[ResetDB] All documents deleted from ChromaDB")
+        return {"status": "ok", "message": "All documents cleared"}
+    except Exception as e:
+        print(f"[ResetDB] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     print("[Lumina Insight] Starting server on http://0.0.0.0:5000")
     uvicorn.run(app, host="0.0.0.0", port=5000)
