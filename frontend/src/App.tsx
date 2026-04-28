@@ -21,7 +21,7 @@ function App() {
       />
       <div className="flex h-screen bg-gray-50">
         <Sidebar currentDoc={currentDoc} onSelectDoc={setCurrentDoc} />
-        <ChatArea currentDoc={currentDoc} />
+        <ChatArea />
       </div>
     </>
   )

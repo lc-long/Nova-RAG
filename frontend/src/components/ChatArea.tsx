@@ -1,11 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import toast from 'react-hot-toast'
 import { Send, Bot, User, ChevronRight, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 
-interface ChatAreaProps {
-  currentDoc: string | null
-}
 
 interface Message {
   id: string
@@ -14,40 +12,30 @@ interface Message {
   references?: { index: number; doc_id: string; content: string }[]
 }
 
-function parseThinkingContent(content: string): { thinking: string; answer: string } {
-  const thinkingParts: string[] = []
-  const answerParts: string[] = []
-  let depth = 0
-  let pos = 0
-  const len = content.length
+function parseThinkingContent(content: string): { thought: string; answer: string; isStreaming: boolean } {
+  const thinkOpen = '<think>'
+  const thinkClose = ''
 
-  while (pos < len) {
-    const thinkStart = content.indexOf('<think>', pos)
-    if (thinkStart === -1) {
-      if (depth > 0) {
-        thinkingParts.push(content.slice(pos))
-      } else {
-        answerParts.push(content.slice(pos))
-      }
-      break
-    }
-
-    if (depth === 0) {
-      if (thinkStart > pos) {
-        answerParts.push(content.slice(pos, thinkStart))
-      }
-    } else {
-      thinkingParts.push(content.slice(pos, thinkStart))
-    }
-
-    pos = thinkStart + 8
-    depth++
+  const openIdx = content.indexOf(thinkOpen)
+  if (openIdx === -1) {
+    // No thinking tags at all - everything is answer
+    const clean = content.replace(/<\/?think>/g, '')
+    return { thought: '', answer: clean, isStreaming: false }
   }
 
-  return {
-    thinking: thinkingParts.join(''),
-    answer: answerParts.join(''),
+  // Find the first closing tag
+  const closeIdx = content.indexOf(thinkClose)
+  if (closeIdx === -1) {
+    // Still streaming - haven't received ]] yet
+    // Everything after the first <think> is thinking content
+    const thoughtRaw = content.slice(openIdx + 8)
+    return { thought: thoughtRaw, answer: '', isStreaming: true }
   }
+
+  // Normal case: have both open and close
+  const thoughtRaw = content.slice(openIdx + 8, closeIdx)
+  const answer = content.slice(closeIdx + 9)
+  return { thought: thoughtRaw, answer, isStreaming: false }
 }
 
 function MessageBubble({ msg }: { msg: Message }) {
@@ -55,23 +43,20 @@ function MessageBubble({ msg }: { msg: Message }) {
 
   if (msg.role === 'user') {
     return (
-      <div className="inline-block p-4 rounded-2xl bg-indigo-600 text-white">
-        <div className="prose prose-sm max-w-none text-white">
-          <ReactMarkdown>{msg.content}</ReactMarkdown>
+      <div className="inline-block p-4 rounded-2xl bg-indigo-600 text-white max-w-xl">
+        <div className="prose prose-sm max-w-none text-white whitespace-pre-wrap">
+          <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
         </div>
       </div>
     )
   }
 
-  const { thinking, answer } = parseThinkingContent(msg.content)
+  const { thought, answer, isStreaming } = parseThinkingContent(msg.content)
 
   return (
-    <div className="space-y-2">
-      {thinking && (
-        <details
-          className="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden"
-          open={false}
-        >
+    <div className="space-y-2 max-w-xl">
+      {thought && (
+        <details className="bg-gray-50 border border-gray-200 rounded-lg" open={false}>
           <summary
             className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-gray-500 hover:bg-gray-100 text-sm font-medium"
             onClick={() => setThinkingOpen(o => !o)}
@@ -79,16 +64,17 @@ function MessageBubble({ msg }: { msg: Message }) {
             {thinkingOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
             <span>🤔</span>
             <span>AI 思考过程</span>
+            {isStreaming && <span className="ml-2 text-xs animate-pulse">（生成中...）</span>}
           </summary>
-          <div className="px-4 py-2 text-sm text-gray-600 italic bg-gray-50">
-            <ReactMarkdown>{thinking}</ReactMarkdown>
+          <div className="px-4 py-2 text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 border-t border-gray-100">
+            {thought}
           </div>
         </details>
       )}
       {answer && (
-        <div className="inline-block p-4 rounded-2xl bg-white shadow-sm border border-gray-200 text-gray-800">
-          <div className="prose prose-sm max-w-none">
-            <ReactMarkdown>{answer}</ReactMarkdown>
+        <div className="inline-block p-4 rounded-2xl bg-white shadow-sm border border-gray-200 text-gray-800 max-w-xl">
+          <div className="prose prose-sm max-w-none text-gray-800 whitespace-pre-wrap">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
           </div>
         </div>
       )}
@@ -98,7 +84,7 @@ function MessageBubble({ msg }: { msg: Message }) {
 
 const API_BASE = 'http://127.0.0.1:8080/api/v1'
 
-export default function ChatArea({ currentDoc }: ChatAreaProps) {
+export default function ChatArea() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -179,18 +165,16 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
               const parsed = JSON.parse(data)
               if (parsed.content) {
                 setMessages(prev => {
-                  const updated = prev.map((m, i) =>
+                  return prev.map((m, i) =>
                     i === prev.length - 1 ? { ...m, content: m.content + parsed.content } : m
                   )
-                  return updated
                 })
               }
               if (parsed.done && parsed.references) {
                 setMessages(prev => {
-                  const updated = [...prev]
-                  const lastMsg = updated[updated.length - 1]
-                  lastMsg.references = parsed.references
-                  return updated
+                  return prev.map((m, i) =>
+                    i === prev.length - 1 ? { ...m, references: parsed.references } : m
+                  )
                 })
               }
             } catch {
@@ -233,35 +217,22 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
                   <Bot className="w-4 h-4 text-gray-600" />
                 )}
               </div>
-              <div className={`max-w-2xl ${msg.role === 'user' ? 'text-right' : ''}`}>
-                <div className="flex gap-3">
-                  <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                    msg.role === 'user' ? 'bg-indigo-600' : 'bg-gray-200'
-                  }`}>
-                    {msg.role === 'user' ? (
-                      <User className="w-4 h-4 text-white" />
-                    ) : (
-                      <Bot className="w-4 h-4 text-gray-600" />
-                    )}
-                  </div>
-                  <div>
-                    <MessageBubble msg={msg} />
-                    {msg.references && msg.references.length > 0 && (
-                      <div className="mt-2 flex items-center gap-2 flex-wrap">
-                        <span className="text-xs text-gray-500">参考来源：</span>
-                        {msg.references.map((ref, idx) => (
-                          <div key={idx} className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-xs text-gray-600">
-                            <ChevronRight className="w-3 h-3" />
-                            <span>[{ref.index}]</span>
-                            <span className="font-medium">{ref.doc_id}</span>
-                            <span className="text-gray-400">-</span>
-                            <span>{ref.content}</span>
-                          </div>
-                        ))}
+              <div className="max-w-2xl">
+                <MessageBubble msg={msg} />
+                {msg.references && msg.references.length > 0 && (
+                  <div className="mt-2 flex items-center gap-2 flex-wrap">
+                    <span className="text-xs text-gray-500">参考来源：</span>
+                    {msg.references.map((ref, idx) => (
+                      <div key={idx} className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-xs text-gray-600">
+                        <ChevronRight className="w-3 h-3" />
+                        <span>[{ref.index}]</span>
+                        <span className="font-medium">{ref.doc_id}</span>
+                        <span className="text-gray-400">-</span>
+                        <span>{ref.content}</span>
                       </div>
-                    )}
+                    ))}
                   </div>
-                </div>
+                )}
               </div>
             </div>
           ))}
