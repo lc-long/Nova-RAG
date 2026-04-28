@@ -121,7 +121,10 @@ async def ingest_document(req: IngestRequest):
         raise HTTPException(status_code=500, detail="Service not initialized")
 
     file_path = req.file_path
+    print(f"[Ingest] Received: doc_id={req.doc_id} filename={req.filename} file_path={file_path}")
+
     if not os.path.exists(file_path):
+        print(f"[Ingest] ERROR: file not found at {file_path}")
         raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
 
     try:

@@ -53,7 +53,13 @@ func (h *DocsHandler) Upload(c *gin.Context) {
 	docID := fmt.Sprintf("%d", os.Getpid()) + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	savedPath := filepath.Join(h.uploadDir, docID+"_"+header.Filename)
 
-	out, err := os.Create(savedPath)
+	absPath, err := filepath.Abs(savedPath)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to resolve absolute path"})
+		return
+	}
+
+	out, err := os.Create(absPath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save file"})
 		return
@@ -74,7 +80,8 @@ func (h *DocsHandler) Upload(c *gin.Context) {
 	}
 	h.db.DB.Create(doc)
 
-	go h.ingestToPython(docID, header.Filename, savedPath)
+	fmt.Printf("[DocsHandler] Saved file: %s\n", absPath)
+	go h.ingestToPython(docID, header.Filename, absPath)
 
 	c.JSON(http.StatusCreated, UploadResponse{
 		ID:     docID,
@@ -85,7 +92,7 @@ func (h *DocsHandler) Upload(c *gin.Context) {
 }
 
 func (h *DocsHandler) ingestToPython(docID, filename, filePath string) {
-	url := fmt.Sprintf("http://%s:%s/ingest", h.pythonHost, h.pythonPort)
+	url := fmt.Sprintf("http://127.0.0.1:%s/ingest", h.pythonPort)
 
 	payload := map[string]string{
 		"doc_id":   docID,
@@ -107,19 +114,15 @@ func (h *DocsHandler) ingestToPython(docID, filename, filePath string) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == 200 {
-		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
-		chunks := 0
-		if n, ok := result["chunks"].(float64); ok {
-			chunks = int(n)
-		}
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[DocsHandler] Ingest OK for %s: %s\n", filename, string(bodyBytes))
 		h.db.DB.Model(&model.Document{}).Where("id = ?", docID).Updates(map[string]interface{}{
 			"status": "ready",
 		})
-		fmt.Printf("[DocsHandler] Ingested %s: %d chunks\n", filename, chunks)
 	} else {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		fmt.Printf("[DocsHandler] Ingest failed for %s [%d]: %s\n", filename, resp.StatusCode, string(bodyBytes))
 		h.db.DB.Model(&model.Document{}).Where("id = ?", docID).Update("status", "failed")
-		fmt.Printf("[DocsHandler] Ingest failed for %s: status %d\n", filename, resp.StatusCode)
 	}
 }
 
