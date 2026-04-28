@@ -108,6 +108,40 @@ async def upload_document(file: UploadFile = File(...)):
     return {"doc_id": doc_id, "status": "processed", "chunks": len(chunks)}
 
 
+class IngestRequest(BaseModel):
+    doc_id: str
+    filename: str
+    file_path: str
+
+
+@app.post("/ingest")
+async def ingest_document(req: IngestRequest):
+    """Ingest a document from a file path (called by Go backend)."""
+    if not chunker or not vector_store or not embedder:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+
+    file_path = req.file_path
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+
+    try:
+        if req.filename.endswith(".pdf"):
+            text = extract_text_from_pdf(file_path)
+        elif req.filename.endswith(".docx"):
+            text = extract_text_from_docx(file_path)
+        else:
+            raise HTTPException(status_code=400, detail="Unsupported file type")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
+
+    doc_id = req.doc_id
+    chunks = chunker.chunk(text, doc_id)
+    embeddings = embedder.embed([c.content for c in chunks])
+    vector_store.add_chunks(chunks, embeddings)
+
+    return {"doc_id": doc_id, "status": "processed", "chunks": len(chunks)}
+
+
 if __name__ == "__main__":
     print("[Lumina Insight] Starting server on http://0.0.0.0:5000")
     uvicorn.run(app, host="0.0.0.0", port=5000)

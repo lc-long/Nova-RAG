@@ -11,6 +11,7 @@ import (
 	"lumina-insight/internal/config"
 	"lumina-insight/internal/handler"
 	"lumina-insight/internal/model"
+	"lumina-insight/internal/storage"
 )
 
 func main() {
@@ -26,6 +27,8 @@ func main() {
 	if err := db.AutoMigrate(&model.Document{}); err != nil {
 		log.Fatal("failed to migrate database")
 	}
+
+	sqlDB := &storage.Database{DB: db}
 
 	r := gin.Default()
 
@@ -43,7 +46,7 @@ func main() {
 		c.Next()
 	})
 
-	docsHandler := handler.NewDocsHandler()
+	docsHandler := handler.NewDocsHandler(sqlDB, cfg.PythonHost, cfg.PythonPort)
 	chatHandler := handler.NewChatHandler(cfg.PythonHost, cfg.PythonPort)
 
 	api := r.Group("/api/v1")
