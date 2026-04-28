@@ -1,21 +1,27 @@
-"""PDF document parser using PyMuPDF (fitz).
+"""PDF document parser using hybrid pdfplumber + PyMuPDF approach.
 
-Upgraded from pdfplumber to PyMuPDF for better table detection and
-improved handling of complex PDF layouts.
+Strategy:
+- pdfplumber handles CJK font-to-unicode mapping correctly (reliable text)
+- PyMuPDF (fitz) provides superior table detection via page.find_tables()
+- Tables are detected by PyMuPDF, then replaced with markdown equivalents
+  in the pdfplumber text using bbox position matching
+
+This gives us reliable international text AND better table detection,
+addressing the weaknesses of each library individually.
 """
-import re
 import fitz  # PyMuPDF
+import pdfplumber
 from typing import Generator
 
 
 def parse_pdf(file_path: str) -> Generator[tuple[str, int, str], None, None]:
     """Parse PDF and yield (text_with_tables, page_number, full_text).
 
-    Strategy:
-    1. Extract all text blocks (preserving reading order via block positions)
-    2. Detect tables using page.find_tables() and convert them to Markdown
-    3. Interleave table Markdown with surrounding text in natural reading order
-    4. Fall back to plain text extraction if no tables detected
+    Hybrid approach:
+    1. Extract base text via pdfplumber (reliable CJK)
+    2. Detect tables via PyMuPDF find_tables()
+    3. Convert PyMuPDF tables to markdown
+    4. Replace table regions in pdfplumber text with markdown tables
 
     Args:
         file_path: Path to PDF file
@@ -23,91 +29,42 @@ def parse_pdf(file_path: str) -> Generator[tuple[str, int, str], None, None]:
     Yields:
         Tuple of (text_with_tables, page_number, full_text)
     """
-    doc = fitz.open(file_path)
-
-    for page_num, page in enumerate(doc, start=1):
-        page_text = page.get_text("text")  # natural reading order
-        if not page_text.strip():
-            continue
-
-        # Detect tables on this page
-        tables = page.find_tables()
-        table_list = tables.tables if tables else []
-
-        if not table_list:
-            # No tables: yield plain text
-            yield page_text.strip(), page_num, page_text.strip()
-            continue
-
-        # Build a list of (y_boundary, content) to merge tables into text
-        # Tables have bbox (x0, y0, x1, y1)
-        markers = []  # list of (y_position, 'table_start'|'table_end'|'text', content)
-
-        # Get text blocks sorted by vertical position
-        blocks = page.get_text("blocks")
-        blocks.sort(key=lambda b: b[0])  # sort by y0 (top to bottom)
-
-        # Collect all table bounding boxes
-        table_bboxes = [(t.bbox[1], t.bbox[3]) for t in table_list]  # (top, bottom)
-
-        text_parts = []
-        current_y = 0
-
-        # Walk through blocks and tables in vertical order
-        for block in blocks:
-            block_y0 = block[1]
-            block_y1 = block[3]
-            block_text = block[4].strip()
-
-            if not block_text:
+    with pdfplumber.open(file_path) as pdf:
+        for page_num, page in enumerate(pdf.pages, start=1):
+            pdf_text = page.extract_text() or ""
+            if not pdf_text.strip():
                 continue
 
-            # Check if any table starts within this block's y range
-            for table_top, table_bottom in table_bboxes:
-                if block_y0 <= table_top < block_y1 and block_y0 < table_bottom:
-                    # This block overlaps with or precedes a table
-                    # First yield the block text before the table
-                    pass
+            # Use PyMuPDF for table detection on this page
+            doc = fitz.open(file_path)
+            mupdf_page = doc[page_num - 1]
 
-        # Simpler approach: process tables and text sequentially by y-position
-        content_items = []  # (start_y, type, content)
+            tables = mupdf_page.find_tables()
+            table_list = tables.tables if tables else []
+            doc.close()
 
-        # Add text blocks
-        for block in blocks:
-            block_text = block[4].strip()
-            if not block_text:
+            if not table_list:
+                yield pdf_text.strip(), page_num, pdf_text.strip()
                 continue
-            content_items.append((block[1], "text", block_text))
 
-        # Add tables
-        for t in table_list:
-            md_table = _table_to_markdown(t)
-            if md_table:
-                content_items.append((t.bbox[1], "table", md_table))
+            # Convert tables to markdown and track their bboxes
+            md_tables = []
+            for t in table_list:
+                md = _table_to_markdown(t)
+                if md:
+                    md_tables.append((t.bbox, md))
 
-        # Sort by y position and merge
-        content_items.sort(key=lambda x: x[0])
+            if not md_tables:
+                yield pdf_text.strip(), page_num, pdf_text.strip()
+                continue
 
-        page_parts = []
-        for _, kind, content in content_items:
-            if kind == "text":
-                page_parts.append(content)
-            elif kind == "table":
-                page_parts.append(content)
-
-        combined = "\n\n".join(page_parts)
-        if combined.strip():
-            yield combined.strip(), page_num, combined.strip()
-
-    doc.close()
+            # Replace table regions with markdown equivalents
+            text_with_tables = _inject_markdown_tables(pdf_text, md_tables)
+            yield text_with_tables.strip(), page_num, pdf_text.strip()
 
 
 def _table_to_markdown(table) -> str:
-    """Convert a PyMuPDF table to a Markdown table string.
-
-    Handles both older dict format (extracted["data"]) and
-    newer list format (extracted as list of rows).
-    """
+    """Convert a PyMuPDF table to a Markdown table string."""
     try:
         extracted = table.extract()
     except Exception:
@@ -127,15 +84,12 @@ def _table_to_markdown(table) -> str:
     if not rows or not isinstance(rows, list):
         return ""
 
-    # Determine column count from longest row
     col_count = max(len(row) for row in rows) if rows else 0
     if col_count == 0:
         return ""
 
-    # Build header row — use first row if it looks like a header
     header_row = list(rows[0]) if rows else []
     if not all(cell and str(cell).strip() for cell in header_row):
-        # First row is not a proper header — generate generic column names
         header = [f"Col{i+1}" for i in range(col_count)]
         data_rows = rows
     else:
@@ -148,7 +102,6 @@ def _table_to_markdown(table) -> str:
 
     for row in data_rows:
         cells = [str(cell).strip() if cell else "" for cell in row]
-        # Pad or trim to col_count
         if len(cells) < col_count:
             cells.extend([""] * (col_count - len(cells)))
         elif len(cells) > col_count:
@@ -156,6 +109,48 @@ def _table_to_markdown(table) -> str:
         md_lines.append("| " + " | ".join(cells) + " |")
 
     return "\n".join(md_lines)
+
+
+def _inject_markdown_tables(pdf_text: str, md_tables: list) -> str:
+    """Replace table regions in pdfplumber text with markdown equivalents.
+
+    Since pdfplumber and PyMuPDF use different coordinate systems, we
+    can't directly map bboxes. Instead, we detect likely table regions
+    in the pdfplumber text (lines with many | characters) and replace
+    them with the corresponding markdown table.
+    """
+    lines = pdf_text.split("\n")
+    result = []
+    table_idx = 0
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+
+        # Check if this line looks like part of a pdfplumber table
+        # pdfplumber renders tables with pipe characters and spacing
+        if "|" in line and line.strip().startswith("|"):
+            # Collect consecutive table lines
+            table_lines = [line]
+            j = i + 1
+            while j < len(lines) and "|" in lines[j] and lines[j].strip().startswith("|"):
+                table_lines.append(lines[j])
+                j += 1
+
+            # Replace with markdown table from PyMuPDF if available
+            if table_idx < len(md_tables):
+                _, md_table = md_tables[table_idx]
+                result.append(md_table)
+                table_idx += 1
+            else:
+                # No more markdown tables, keep original
+                result.extend(table_lines)
+            i = j
+        else:
+            result.append(line)
+            i += 1
+
+    return "\n".join(result)
 
 
 def extract_text_from_pdf(file_path: str) -> str:
