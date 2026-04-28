@@ -1,0 +1,82 @@
+# 环境配置
+.env
+.env.local
+.env.production
+
+# Node.js
+node_modules/
+frontend/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+.python-version
+
+# 虚拟环境
+.venv/
+venv/
+env/
+ENV/
+
+# 向量数据库持久化（ChromaDB）
+python/vector_db/
+
+# SQLite 数据库文件（除非要提交）
+*.sqlite3
+*.db
+
+# Go 二进制
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+backend/server
+backend/lumina.db
+
+# 临时上传文件（保留目录结构）
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# 构建产物
+dist/
+build/
+*.o
+*.a
+*.test
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# 文档生成物
+site/
+.playwright/
+
+# 压测/调试临时文件
+python/rag_benchmark.py
+python/stress_test.py
+python/debug_chroma.py
+python/check_env.py
+python/test_upload_pipeline.py
+python/test_output.txt
+python/stderr.txt
+python/stdout.txt
+python/benchmark_downloads/
+python/test_documents/
+
+# Claude Code
+.claude/settings.local.json

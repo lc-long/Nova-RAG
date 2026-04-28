@@ -37,8 +37,8 @@ class SentenceTransformerEmbedder(Embedder):
         if cls._model is None:
             try:
                 from sentence_transformers import SentenceTransformer
-                print(f"[Embedding] Downloading model {cls._model_name} from {os.environ.get('HF_ENDPOINT', 'huggingface.co')}...")
-                cls._model = SentenceTransformer(cls._model_name)
+                print(f"[Embedding] Loading model {cls._model_name} (local_files_only)...")
+                cls._model = SentenceTransformer(cls._model_name, device="cpu")
                 print(f"[Embedding] Model {cls._model_name} loaded successfully")
             except Exception as e:
                 cls._load_error = e

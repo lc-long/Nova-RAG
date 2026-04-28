@@ -134,6 +134,9 @@ async def ingest_document(req: IngestRequest):
             text = extract_text_from_pdf(file_path)
         elif req.filename.endswith(".docx"):
             text = extract_text_from_docx(file_path)
+        elif req.filename.endswith(".txt"):
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type")
     except Exception as e:
@@ -160,8 +163,10 @@ async def reset_db():
         raise HTTPException(status_code=500, detail="Service not initialized")
     try:
         vector_store.client.delete_collection(name=vector_store.collection_name)
-        vector_store._collection = None
         print("[ResetDB] Collection deleted")
+        # 重置 server 端引用，让下次访问时自动重建
+        vector_store._collection = None
+        print("[ResetDB] Collection reference reset (will auto-recreate on next access)")
         return {"status": "ok", "message": "ChromaDB reset complete"}
     except Exception as e:
         print(f"[ResetDB] Error: {e}")
