@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import toast from 'react-hot-toast'
-import { Send, Bot, User, ChevronRight, Loader2 } from 'lucide-react'
+import { Send, Bot, User, ChevronRight, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
 
 interface ChatAreaProps {
   currentDoc: string | null
@@ -12,6 +12,88 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   references?: { index: number; doc_id: string; content: string }[]
+}
+
+function parseThinkingContent(content: string): { thinking: string; answer: string } {
+  const thinkingParts: string[] = []
+  const answerParts: string[] = []
+  let depth = 0
+  let pos = 0
+  const len = content.length
+
+  while (pos < len) {
+    const thinkStart = content.indexOf('<think>', pos)
+    if (thinkStart === -1) {
+      if (depth > 0) {
+        thinkingParts.push(content.slice(pos))
+      } else {
+        answerParts.push(content.slice(pos))
+      }
+      break
+    }
+
+    if (depth === 0) {
+      if (thinkStart > pos) {
+        answerParts.push(content.slice(pos, thinkStart))
+      }
+    } else {
+      thinkingParts.push(content.slice(pos, thinkStart))
+    }
+
+    pos = thinkStart + 8
+    depth++
+  }
+
+  return {
+    thinking: thinkingParts.join(''),
+    answer: answerParts.join(''),
+  }
+}
+
+function MessageBubble({ msg }: { msg: Message }) {
+  const [thinkingOpen, setThinkingOpen] = useState(false)
+
+  if (msg.role === 'user') {
+    return (
+      <div className="inline-block p-4 rounded-2xl bg-indigo-600 text-white">
+        <div className="prose prose-sm max-w-none text-white">
+          <ReactMarkdown>{msg.content}</ReactMarkdown>
+        </div>
+      </div>
+    )
+  }
+
+  const { thinking, answer } = parseThinkingContent(msg.content)
+
+  return (
+    <div className="space-y-2">
+      {thinking && (
+        <details
+          className="bg-gray-50 border border-gray-200 rounded-lg overflow-hidden"
+          open={false}
+        >
+          <summary
+            className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-gray-500 hover:bg-gray-100 text-sm font-medium"
+            onClick={() => setThinkingOpen(o => !o)}
+          >
+            {thinkingOpen ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+            <span>🤔</span>
+            <span>AI 思考过程</span>
+          </summary>
+          <div className="px-4 py-2 text-sm text-gray-600 italic bg-gray-50">
+            <ReactMarkdown>{thinking}</ReactMarkdown>
+          </div>
+        </details>
+      )}
+      {answer && (
+        <div className="inline-block p-4 rounded-2xl bg-white shadow-sm border border-gray-200 text-gray-800">
+          <div className="prose prose-sm max-w-none">
+            <ReactMarkdown>{answer}</ReactMarkdown>
+          </div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 const API_BASE = 'http://127.0.0.1:8080/api/v1'
@@ -152,42 +234,34 @@ export default function ChatArea({ currentDoc }: ChatAreaProps) {
                 )}
               </div>
               <div className={`max-w-2xl ${msg.role === 'user' ? 'text-right' : ''}`}>
-                <div className={`inline-block p-4 rounded-2xl ${
-                  msg.role === 'user'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-white shadow-sm border border-gray-200 text-gray-800'
-                }`}>
-                  <div className="prose prose-sm max-w-none">
-                    <ReactMarkdown
-                      components={{
-                        think: ({children}) => (
-                          <div className="bg-gray-100 text-gray-600 text-sm px-3 py-2 rounded-lg my-2 italic border-l-4 border-gray-300">
-                            <div className="flex items-center gap-1 mb-1 font-medium not-italic text-gray-500">
-                              <span>🤔</span> 思考中...
-                            </div>
-                            {children}
+                <div className="flex gap-3">
+                  <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
+                    msg.role === 'user' ? 'bg-indigo-600' : 'bg-gray-200'
+                  }`}>
+                    {msg.role === 'user' ? (
+                      <User className="w-4 h-4 text-white" />
+                    ) : (
+                      <Bot className="w-4 h-4 text-gray-600" />
+                    )}
+                  </div>
+                  <div>
+                    <MessageBubble msg={msg} />
+                    {msg.references && msg.references.length > 0 && (
+                      <div className="mt-2 flex items-center gap-2 flex-wrap">
+                        <span className="text-xs text-gray-500">参考来源：</span>
+                        {msg.references.map((ref, idx) => (
+                          <div key={idx} className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-xs text-gray-600">
+                            <ChevronRight className="w-3 h-3" />
+                            <span>[{ref.index}]</span>
+                            <span className="font-medium">{ref.doc_id}</span>
+                            <span className="text-gray-400">-</span>
+                            <span>{ref.content}</span>
                           </div>
-                        ),
-                        p: ({children}) => <p className="mb-2">{children}</p>,
-                      }}
-                    >{msg.content}</ReactMarkdown>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-
-                {msg.references && msg.references.length > 0 && (
-                  <div className="mt-2 flex items-center gap-2 flex-wrap">
-                    <span className="text-xs text-gray-500">参考来源：</span>
-                    {msg.references.map((ref, idx) => (
-                      <div key={idx} className="flex items-center gap-1 px-2 py-1 bg-gray-100 rounded text-xs text-gray-600">
-                        <ChevronRight className="w-3 h-3" />
-                        <span>[{ref.index}]</span>
-                        <span className="font-medium">{ref.doc_id}</span>
-                        <span className="text-gray-400">-</span>
-                        <span>{ref.content}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
           ))}
