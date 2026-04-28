@@ -71,10 +71,12 @@ async def process_query(request: QueryRequest):
 
     def generate():
         for chunk in llm_client.stream_chat(messages, context_chunks):
-            if chunk.done:
+            if chunk.chunk_type == "done":
                 yield f"data: {json.dumps({'done': True, 'references': chunk.references})}\n\n"
-            else:
-                yield f"data: {json.dumps({'content': chunk.content})}\n\n"
+            elif chunk.chunk_type == "reasoning":
+                yield f"data: {json.dumps({'type': 'reasoning', 'content': chunk.content})}\n\n"
+            elif chunk.chunk_type == "answer":
+                yield f"data: {json.dumps({'type': 'answer', 'content': chunk.content})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 

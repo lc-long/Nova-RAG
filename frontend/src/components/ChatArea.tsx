@@ -9,33 +9,8 @@ interface Message {
   id: string
   role: 'user' | 'assistant'
   content: string
+  reasoning: string
   references?: { index: number; doc_id: string; content: string }[]
-}
-
-function parseThinkingContent(content: string): { thought: string; answer: string; isStreaming: boolean } {
-  const thinkOpen = '<think>'
-  const thinkClose = ''
-
-  const openIdx = content.indexOf(thinkOpen)
-  if (openIdx === -1) {
-    // No thinking tags at all - everything is answer
-    const clean = content.replace(/<\/?think>/g, '')
-    return { thought: '', answer: clean, isStreaming: false }
-  }
-
-  // Find the first closing tag
-  const closeIdx = content.indexOf(thinkClose)
-  if (closeIdx === -1) {
-    // Still streaming - haven't received ]] yet
-    // Everything after the first <think> is thinking content
-    const thoughtRaw = content.slice(openIdx + 8)
-    return { thought: thoughtRaw, answer: '', isStreaming: true }
-  }
-
-  // Normal case: have both open and close
-  const thoughtRaw = content.slice(openIdx + 8, closeIdx)
-  const answer = content.slice(closeIdx + 9)
-  return { thought: thoughtRaw, answer, isStreaming: false }
 }
 
 function MessageBubble({ msg }: { msg: Message }) {
@@ -51,11 +26,11 @@ function MessageBubble({ msg }: { msg: Message }) {
     )
   }
 
-  const { thought, answer, isStreaming } = parseThinkingContent(msg.content)
+  const isStreaming = msg.reasoning && !msg.content
 
   return (
     <div className="space-y-2 max-w-xl">
-      {thought && (
+      {msg.reasoning && (
         <details className="bg-gray-50 border border-gray-200 rounded-lg" open={false}>
           <summary
             className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-gray-500 hover:bg-gray-100 text-sm font-medium"
@@ -67,14 +42,14 @@ function MessageBubble({ msg }: { msg: Message }) {
             {isStreaming && <span className="ml-2 text-xs animate-pulse">（生成中...）</span>}
           </summary>
           <div className="px-4 py-2 text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 border-t border-gray-100">
-            {thought}
+            {msg.reasoning}
           </div>
         </details>
       )}
-      {answer && (
+      {msg.content && (
         <div className="inline-block p-4 rounded-2xl bg-white shadow-sm border border-gray-200 text-gray-800 max-w-xl">
           <div className="prose prose-sm max-w-none text-gray-800 whitespace-pre-wrap">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{answer}</ReactMarkdown>
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
           </div>
         </div>
       )}
@@ -119,6 +94,7 @@ export default function ChatArea() {
       id: (Date.now() + 1).toString(),
       role: 'assistant',
       content: '',
+      reasoning: '',
     }
     setMessages(prev => [...prev, assistantMessage])
 
@@ -163,7 +139,14 @@ export default function ChatArea() {
 
             try {
               const parsed = JSON.parse(data)
-              if (parsed.content) {
+              if (parsed.type === 'reasoning') {
+                setMessages(prev => {
+                  return prev.map((m, i) =>
+                    i === prev.length - 1 ? { ...m, reasoning: m.reasoning + parsed.content } : m
+                  )
+                })
+              }
+              if (parsed.type === 'answer') {
                 setMessages(prev => {
                   return prev.map((m, i) =>
                     i === prev.length - 1 ? { ...m, content: m.content + parsed.content } : m

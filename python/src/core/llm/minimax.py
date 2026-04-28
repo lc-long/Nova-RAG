@@ -13,8 +13,8 @@ class Message:
 
 @dataclass
 class StreamChunk:
+    chunk_type: str  # "reasoning" | "answer" | "done"
     content: str
-    done: bool
     references: Optional[list[dict]] = None
 
 
@@ -42,7 +42,7 @@ class MinimaxClient:
             context_chunks: Retrieved parent chunks for context
 
         Yields:
-            StreamChunk with content, done flag, and references
+            StreamChunk with chunk_type ("reasoning"|"answer"|"done"), content, and references
         """
         context_text = self._build_context_prompt(context_chunks)
         prompt = self._build_prompt(messages, context_text)
@@ -102,21 +102,21 @@ class MinimaxClient:
 
                 if reasoning:
                     yield StreamChunk(
-                        content=f"<think>{reasoning}</think>",
-                        done=False,
+                        chunk_type="reasoning",
+                        content=reasoning,
                         references=None
                     )
 
                 if content:
                     yield StreamChunk(
+                        chunk_type="answer",
                         content=content,
-                        done=False,
                         references=None
                     )
 
                 finish_reason = choice.get("finish_reason")
                 if finish_reason:
-                    yield StreamChunk(content="", done=True, references=references)
+                    yield StreamChunk(chunk_type="done", content="", references=references)
                     return
 
             except json.JSONDecodeError:
@@ -124,7 +124,7 @@ class MinimaxClient:
             except Exception:
                 continue
 
-        yield StreamChunk(content="", done=True, references=references)
+        yield StreamChunk(chunk_type="done", content="", references=references)
 
     def _build_context_prompt(self, chunks: list[dict]) -> str:
         """Build context section of prompt with [N] citation format."""
