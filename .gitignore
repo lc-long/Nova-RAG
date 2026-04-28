@@ -33,6 +33,10 @@ python/vector_db/
 *.sqlite3
 *.db
 
+# Local configs
+.claude/
+backend/lumina.db
+
 # Go 二进制
 *.exe
 *.exe~
@@ -40,7 +44,6 @@ python/vector_db/
 *.so
 *.dylib
 backend/server
-backend/lumina.db
 
 # 临时上传文件（保留目录结构）
 backend/uploads/*
@@ -79,4 +82,3 @@ python/benchmark_downloads/
 python/test_documents/
 
 # Claude Code
-.claude/settings.local.json
