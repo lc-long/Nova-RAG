@@ -57,7 +57,7 @@ class HybridRetriever:
 
         if file_match:
             filename_hint = file_match.group(1).lower()
-            dense_results = self._metadata_search(filename_hint, recall_k)
+            dense_results = self._metadata_search(filename_hint, recall_k, doc_id)
         else:
             dense_results = self._multi_query_vector_search(rewritten_queries, recall_k, doc_id)
 
@@ -67,7 +67,7 @@ class HybridRetriever:
             sparse_ids = self._multi_query_bm25_search(rewritten_queries, recall_k, doc_id)
             for chunk_id, bm25_score in sparse_ids:
                 content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
-                doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
+                result_doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
                 parent_id = ""
                 try:
                     vec_result = self.vector_store.collection.get(ids=[chunk_id])
@@ -80,7 +80,7 @@ class HybridRetriever:
                     "parent_id": chunk_id,
                     "child_content": "",
                     "parent_content": content,
-                    "doc_id": doc_id,
+                    "doc_id": result_doc_id,
                     "page_number": 0,
                     "bm25_score": bm25_score,
                 })
@@ -294,11 +294,15 @@ class HybridRetriever:
 
         return chunks
 
-    def _metadata_search(self, filename_hint: str, top_k: int) -> list[dict]:
-        """Search by source metadata containing filename hint."""
+    def _metadata_search(self, filename_hint: str, top_k: int, doc_id: Optional[str] = None) -> list[dict]:
+        """Search by source metadata containing filename hint, optionally scoped to a doc_id."""
         try:
+            where_filter = {"source": {"$contains": filename_hint}}
+            if doc_id:
+                # Enforce doc_id scoping even when searching by filename
+                where_filter["doc_id"] = doc_id
             all_data = self.vector_store.collection.get(
-                where={"source": {"$contains": filename_hint}},
+                where=where_filter,
                 include=["documents", "metadatas", "distances"]
             )
             results = []
