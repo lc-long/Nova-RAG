@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import toast from 'react-hot-toast'
-import { Send, Bot, User, ChevronRight, Loader2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Send, Bot, User, ChevronRight, Loader2, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
 
 
 interface Message {
@@ -58,6 +58,7 @@ function MessageBubble({ msg }: { msg: Message }) {
 }
 
 const API_BASE = 'http://127.0.0.1:8080/api/v1'
+const STORAGE_KEY = 'lumina_chat_history'
 
 export default function ChatArea() {
   const [messages, setMessages] = useState<Message[]>([])
@@ -70,9 +71,40 @@ export default function ChatArea() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
+  // Restore session from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY)
+      if (saved) {
+        const parsed = JSON.parse(saved) as Message[]
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setMessages(parsed)
+        }
+      }
+    } catch {
+      // Ignore parse errors
+    }
+  }, [])
+
+  // Persist session to localStorage on every change
+  useEffect(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(messages))
+    } catch {
+      // Ignore quota errors
+    }
+  }, [messages])
+
+  // Scroll on new messages
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  const handleClearSession = () => {
+    if (!window.confirm('确定要清空当前会话吗？')) return
+    setMessages([])
+    localStorage.removeItem(STORAGE_KEY)
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -188,7 +220,19 @@ export default function ChatArea() {
           </div>
         </div>
       ) : (
-        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+        <>
+          <div className="flex items-center justify-between px-6 pt-4">
+            <span className="text-sm text-gray-400">{messages.length} 条消息</span>
+            <button
+              onClick={handleClearSession}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+              title="清空当前会话"
+            >
+              <Trash2 className="w-4 h-4" />
+              清空会话
+            </button>
+          </div>
+          <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {messages.map(msg => (
             <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
               <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
