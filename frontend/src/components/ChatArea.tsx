@@ -265,6 +265,7 @@ export default function ChatArea() {
           ))}
           <div ref={messagesEndRef} />
         </div>
+        </>
       )}
 
       <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 bg-white">
