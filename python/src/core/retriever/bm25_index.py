@@ -3,10 +3,22 @@
 Maintains an in-memory BM25 index per document, built at ingest time
 and queried during retrieval for keyword matching.
 """
+import re
 import jieba
 import pickle
 from pathlib import Path
 from typing import Optional
+
+
+def _normalize_text(text: str) -> str:
+    """Collapse 'digit + space + letter' into 'digit+letter' to bridge spacing gaps.
+
+    Examples:
+      '30 m'  -> '30m'
+      '50 km' -> '50km'
+      '限高 30 m' -> '限高30m'
+    """
+    return re.sub(r'(\d+)\s+([a-zA-Z]+)', r'\1\2', text)
 
 
 class BM25Indexer:
@@ -19,7 +31,7 @@ class BM25Indexer:
         # doc_id -> {"chunk_ids": [...], "corpus": [[tokenized sentences]], "bm25": BM25}
         self.doc_indexes: dict = {}
         self.chunk_id_to_doc: dict = {}  # chunk_id -> doc_id
-        self.chunk_id_to_content: dict = {}  # chunk_id -> content
+        self.chunk_id_to_content: dict = {}  # chunk_id -> content (original, not normalized)
         self._load()
 
     def _load(self):
@@ -50,17 +62,16 @@ class BM25Indexer:
 
         doc_id = chunks[0].doc_id
         chunk_ids = [c.chunk_id for c in chunks]
-        corpus = [" ".join(jieba.cut(c.content)) for c in chunks]
 
-        # Tokenize corpus for BM25 (jieba returns generator)
-        tokenized_corpus = [list(jieba.cut(doc)) for doc in corpus]
+        # Normalize content before tokenizing to eliminate spacing mismatches
+        normalized_corpus = [_normalize_text(c.content) for c in chunks]
+        tokenized_corpus = [list(jieba.cut(doc)) for doc in normalized_corpus]
 
         from rank_bm25 import BM25Okapi
         bm25 = BM25Okapi(tokenized_corpus)
 
         self.doc_indexes[doc_id] = {
             "chunk_ids": chunk_ids,
-            "corpus": corpus,
             "tokenized_corpus": tokenized_corpus,
             "bm25": bm25,
         }
@@ -73,7 +84,9 @@ class BM25Indexer:
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
         """Search BM25 index, return [(chunk_id, score)] sorted by score descending."""
-        query_tokens = list(jieba.cut(query))
+        # Normalize query to match indexed content
+        normalized_query = _normalize_text(query)
+        query_tokens = list(jieba.cut(normalized_query))
         all_results: dict[str, float] = {}
 
         for doc_id, idx_data in self.doc_indexes.items():

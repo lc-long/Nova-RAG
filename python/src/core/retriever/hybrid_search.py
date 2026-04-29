@@ -6,12 +6,14 @@ Supports multi-query expansion via QueryRewriter to bridge vocabulary gaps.
 import re
 from typing import Optional
 
-from .bm25_index import BM25Indexer
+from .bm25_index import BM25Indexer, _normalize_text
 from .query_rewriter import QueryRewriter
 
 # Scale-up constants: initial recall pool before RRF fusion
-_RECALL_MULTIPLIER = 6   # top_k * 6 → initial召回量（原来是 * 2，即 10；现在是 30）
-_OUTPUT_TOP_K = 12        # RRF融合后输出量（原来是 5，现在是 12）
+_RECALL_MULTIPLIER = 6   # top_k * 6 → initial召回量
+_OUTPUT_TOP_K = 20        # RRF融合后输出量（扩大到20，给大模型更宽的上下文视野）
+_RRF_K = 60              # RRF constant
+_MISSING_RANK = 1000     # Large rank assigned to chunks appearing in only one channel
 
 
 class HybridRetriever:
@@ -23,7 +25,7 @@ class HybridRetriever:
         embedder,
         bm25_indexer: Optional[BM25Indexer] = None,
         distance_threshold: float = 10.0,
-        rrf_k: int = 60,
+        rrf_k: int = _RRF_K,
         rewriter: Optional[QueryRewriter] = None,
     ):
         self.vector_store = vector_store
@@ -37,7 +39,7 @@ class HybridRetriever:
         """Hybrid search: multi-query expanded vector + BM25 with RRF fusion.
 
         Scaling: initial recall pool = top_k * 6 (30 when top_k=5),
-        output after RRF = _OUTPUT_TOP_K (12).
+        output after RRF = _OUTPUT_TOP_K (20).
         """
         # Rewrite query into multiple variants to bridge vocabulary gap
         rewritten_queries = self.rewriter.rewrite_with_fallback(query)
@@ -77,10 +79,10 @@ class HybridRetriever:
                     "parent_content": content,
                     "doc_id": doc_id,
                     "page_number": 0,
-                    "distance": bm25_score,
+                    "bm25_score": bm25_score,
                 })
 
-        # --- RRF Fusion ---
+        # --- RRF Fusion (rank-based, not score-based) ---
         fused = self._rrf_fuse(dense_results, sparse_results, _OUTPUT_TOP_K)
         return fused
 
@@ -94,7 +96,9 @@ class HybridRetriever:
         chunk_best: dict[str, dict] = {}  # chunk_id -> result dict with best distance
 
         for q in queries:
-            query_embedding = self.embedder.embed([q])[0]
+            # Normalize query to match BM25 normalization
+            normalized_q = _normalize_text(q)
+            query_embedding = self.embedder.embed([normalized_q])[0]
             results = self._vector_search(query_embedding, top_k)
             for r in results:
                 key = r.get("child_id") or r.get("parent_id")
@@ -103,7 +107,6 @@ class HybridRetriever:
                 if key not in chunk_best:
                     chunk_best[key] = r
                 else:
-                    # Keep the result with the smaller (better) distance
                     if r.get("distance", float("inf")) < chunk_best[key].get("distance", float("inf")):
                         chunk_best[key] = r
 
@@ -113,8 +116,7 @@ class HybridRetriever:
         """Run BM25 search across multiple query variants, merge by best score.
 
         For each chunk, we take the maximum BM25 score across all query variants.
-        This ensures that '限高' matches '限制高度' even if the original query
-        only says '限制高度 30m'.
+        Text normalization is handled inside BM25Indexer.search().
         """
         chunk_best_score: dict[str, float] = {}
 
@@ -133,25 +135,41 @@ class HybridRetriever:
         sparse_results: list[dict],
         top_k: int
     ) -> list[dict]:
-        """Reciprocal Rank Fusion of two result lists."""
+        """Reciprocal Rank Fusion using rank-based scoring (NOT distance/score).
+
+        Correct RRF formula: score = 1/(k+rank)
+        - Dense: sort by distance ASC, assign rank 1, 2, 3...
+        - Sparse: sort by BM25 score DESC, assign rank 1, 2, 3...
+        - Chunks in only one channel get rank=_MISSING_RANK for the other channel
+        """
+        # --- Build dense rank map (distance ASC -> rank) ---
+        sorted_dense = sorted(dense_results, key=lambda r: r.get("distance", float("inf")))
+        dense_rank: dict[str, int] = {}
+        for rank, result in enumerate(sorted_dense, start=1):
+            key = result.get("child_id") or result.get("parent_id")
+            if key:
+                dense_rank[key] = rank
+
+        # --- Build sparse rank map (BM25 score DESC -> rank) ---
+        sorted_sparse = sorted(sparse_results, key=lambda r: r.get("bm25_score", 0), reverse=True)
+        sparse_rank: dict[str, int] = {}
+        for rank, result in enumerate(sorted_sparse, start=1):
+            key = result.get("child_id") or result.get("parent_id")
+            if key:
+                sparse_rank[key] = rank
+
+        # --- Collect all unique chunk keys ---
+        all_keys = set(dense_rank.keys()) | set(sparse_rank.keys())
+
+        # --- Compute RRF scores using rank-based formula ---
         rrf_scores: dict[str, float] = {}
-
-        for rank, result in enumerate(dense_results):
-            key = result.get("child_id") or result.get("parent_id")
-            if key:
-                distance = result.get("distance", 0)
-                vec_score = 1.0 / (self.rrf_k + distance)
-                rrf_scores[key] = rrf_scores.get(key, 0) + vec_score
-
-        for rank, result in enumerate(sparse_results):
-            key = result.get("child_id") or result.get("parent_id")
-            if key:
-                bm25_score = result.get("distance", 0)
-                sparse_normalized = bm25_score / 10.0
-                rrf_scores[key] = rrf_scores.get(key, 0) + sparse_normalized
+        for key in all_keys:
+            d_rank = dense_rank.get(key, _MISSING_RANK)
+            s_rank = sparse_rank.get(key, _MISSING_RANK)
+            rrf_scores[key] = (1.0 / (self.rrf_k + d_rank)) + (1.0 / (self.rrf_k + s_rank))
 
         # Build result map with all metadata
-        all_results = {}
+        all_results: dict[str, dict] = {}
         for r in dense_results:
             key = r.get("child_id") or r.get("parent_id")
             if key:
@@ -162,6 +180,7 @@ class HybridRetriever:
                 if key not in all_results:
                     all_results[key] = r
 
+        # Sort by RRF score descending
         sorted_keys = sorted(rrf_scores, key=lambda k: rrf_scores[k], reverse=True)
 
         chunks = []
