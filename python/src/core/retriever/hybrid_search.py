@@ -1,11 +1,13 @@
 """Hybrid retriever combining dense (ChromaDB) and sparse (BM25) search.
 
 Uses Reciprocal Rank Fusion (RRF) to merge results from both engines.
+Supports multi-query expansion via QueryRewriter to bridge vocabulary gaps.
 """
 import re
 from typing import Optional
 
 from .bm25_index import BM25Indexer
+from .query_rewriter import QueryRewriter
 
 # Scale-up constants: initial recall pool before RRF fusion
 _RECALL_MULTIPLIER = 6   # top_k * 6 → initial召回量（原来是 * 2，即 10；现在是 30）
@@ -22,36 +24,42 @@ class HybridRetriever:
         bm25_indexer: Optional[BM25Indexer] = None,
         distance_threshold: float = 10.0,
         rrf_k: int = 60,
+        rewriter: Optional[QueryRewriter] = None,
     ):
         self.vector_store = vector_store
         self.embedder = embedder
         self.bm25_indexer = bm25_indexer
         self.distance_threshold = distance_threshold
         self.rrf_k = rrf_k
+        self.rewriter = rewriter or QueryRewriter()
 
     def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
-        """Hybrid search: vector + BM25 with RRF fusion.
+        """Hybrid search: multi-query expanded vector + BM25 with RRF fusion.
 
         Scaling: initial recall pool = top_k * 6 (30 when top_k=5),
         output after RRF = _OUTPUT_TOP_K (12).
         """
+        # Rewrite query into multiple variants to bridge vocabulary gap
+        rewritten_queries = self.rewriter.rewrite_with_fallback(query)
+        if len(rewritten_queries) > 10:
+            rewritten_queries = rewritten_queries[:10]
+
         # Internal scaling: always use expanded pool regardless of caller top_k
         recall_k = max(top_k * _RECALL_MULTIPLIER, _OUTPUT_TOP_K)
 
-        # --- Vector (dense) retrieval ---
+        # --- Vector (dense) retrieval across all query variants ---
         file_match = re.search(r'([^\s/\\]+\.(?:pdf|docx))', query, re.IGNORECASE)
 
         if file_match:
             filename_hint = file_match.group(1).lower()
             dense_results = self._metadata_search(filename_hint, recall_k)
         else:
-            query_embedding = self.embedder.embed([query])[0]
-            dense_results = self._vector_search(query_embedding, recall_k)
+            dense_results = self._multi_query_vector_search(rewritten_queries, recall_k)
 
-        # --- BM25 (sparse) retrieval ---
+        # --- BM25 (sparse) retrieval across all query variants ---
         sparse_results = []
         if self.bm25_indexer:
-            sparse_ids = self.bm25_indexer.search(query, top_k=recall_k)
+            sparse_ids = self._multi_query_bm25_search(rewritten_queries, recall_k)
             for chunk_id, bm25_score in sparse_ids:
                 content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
                 doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
@@ -75,6 +83,49 @@ class HybridRetriever:
         # --- RRF Fusion ---
         fused = self._rrf_fuse(dense_results, sparse_results, _OUTPUT_TOP_K)
         return fused
+
+    def _multi_query_vector_search(self, queries: list[str], top_k: int) -> list[dict]:
+        """Run vector search across multiple query variants, merge results.
+
+        For each query variant, we collect results and keep the best distance
+        for each chunk across all queries. This expands recall beyond what
+        a single query can achieve.
+        """
+        chunk_best: dict[str, dict] = {}  # chunk_id -> result dict with best distance
+
+        for q in queries:
+            query_embedding = self.embedder.embed([q])[0]
+            results = self._vector_search(query_embedding, top_k)
+            for r in results:
+                key = r.get("child_id") or r.get("parent_id")
+                if key is None:
+                    continue
+                if key not in chunk_best:
+                    chunk_best[key] = r
+                else:
+                    # Keep the result with the smaller (better) distance
+                    if r.get("distance", float("inf")) < chunk_best[key].get("distance", float("inf")):
+                        chunk_best[key] = r
+
+        return list(chunk_best.values())
+
+    def _multi_query_bm25_search(self, queries: list[str], top_k: int) -> list[tuple[str, float]]:
+        """Run BM25 search across multiple query variants, merge by best score.
+
+        For each chunk, we take the maximum BM25 score across all query variants.
+        This ensures that '限高' matches '限制高度' even if the original query
+        only says '限制高度 30m'.
+        """
+        chunk_best_score: dict[str, float] = {}
+
+        for q in queries:
+            results = self.bm25_indexer.search(q, top_k=top_k)
+            for chunk_id, score in results:
+                if chunk_id not in chunk_best_score or score > chunk_best_score[chunk_id]:
+                    chunk_best_score[chunk_id] = score
+
+        sorted_results = sorted(chunk_best_score.items(), key=lambda x: x[1], reverse=True)
+        return sorted_results[:top_k]
 
     def _rrf_fuse(
         self,
