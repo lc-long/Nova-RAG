@@ -8,6 +8,7 @@ from typing import Optional
 
 from .bm25_index import BM25Indexer, _normalize_text
 from .query_rewriter import QueryRewriter
+from .reranker import Reranker
 
 # Scale-up constants: initial recall pool before RRF fusion
 _RECALL_MULTIPLIER = 6   # top_k * 6 → initial召回量
@@ -34,6 +35,7 @@ class HybridRetriever:
         self.distance_threshold = distance_threshold
         self.rrf_k = rrf_k
         self.rewriter = rewriter or QueryRewriter()
+        self.reranker = Reranker()
 
     def retrieve(self, query: str, top_k: int = 5, doc_id: Optional[str] = None) -> list[dict]:
         """Hybrid search: multi-query expanded vector + BM25 with RRF fusion.
@@ -85,7 +87,10 @@ class HybridRetriever:
 
         # --- RRF Fusion (rank-based, not score-based) ---
         fused = self._rrf_fuse(dense_results, sparse_results, _OUTPUT_TOP_K)
-        return fused
+
+        # --- Cross-Encoder reranking: refine top-20 with deep semantic scoring ---
+        reranked = self.reranker.rerank(query, fused, top_k=_OUTPUT_TOP_K)
+        return reranked
 
     def _multi_query_vector_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
         """Run vector search across multiple query variants, merge results.
