@@ -19,7 +19,8 @@ from ..core.chunker.parent_child import ParentChildChunker
 from ..core.chunker.pdf_parser import extract_text_from_pdf
 from ..core.chunker.docx_parser import extract_text_from_docx
 from ..core.embedder.sentence_transformer import SentenceTransformerEmbedder
-from ..core.retriever.chroma import ChromaRetriever
+from ..core.retriever.hybrid_search import HybridRetriever
+from ..core.retriever.bm25_index import BM25Indexer
 from ..core.storage.vector_store import VectorStore
 from ..core.llm.minimax import MinimaxClient, Message
 
@@ -35,12 +36,12 @@ app.add_middleware(
 
 vector_store: Optional[VectorStore] = None
 embedder: Optional[SentenceTransformerEmbedder] = None
-retriever: Optional[ChromaRetriever] = None
+bm25_indexer: Optional[BM25Indexer] = None
+retriever: Optional[HybridRetriever] = None
 chunker: Optional[ParentChildChunker] = None
 llm_client: Optional[MinimaxClient] = None
 
 # In-memory task store for async ingestion tracking
-# task_id -> {"status": "processing"|"completed"|"failed", "result": ..., "error": ...}
 task_store: dict = {}
 
 
@@ -51,11 +52,12 @@ class QueryRequest(BaseModel):
 
 @app.on_event("startup")
 async def startup():
-    global vector_store, embedder, retriever, chunker, llm_client
+    global vector_store, embedder, retriever, chunker, llm_client, bm25_indexer
     print("[Lumina Insight] Initializing components...")
     vector_store = VectorStore(persist_directory="./vector_db")
     embedder = SentenceTransformerEmbedder()
-    retriever = ChromaRetriever(vector_store, embedder)
+    bm25_indexer = BM25Indexer(persist_directory="./vector_db")
+    retriever = HybridRetriever(vector_store, embedder, bm25_indexer)
     chunker = ParentChildChunker()
     llm_client = MinimaxClient()
     print("[Lumina Insight] All components ready!")
@@ -134,7 +136,6 @@ async def ingest_document(req: IngestRequest, background_tasks: BackgroundTasks)
 
     print(f"[Ingest] Queued: doc_id={req.doc_id} task_id={task_id} filename={req.filename}")
 
-    # Register task as processing
     task_store[task_id] = {
         "status": "processing",
         "doc_id": req.doc_id,
@@ -144,7 +145,6 @@ async def ingest_document(req: IngestRequest, background_tasks: BackgroundTasks)
         "chunks": 0,
     }
 
-    # Schedule actual ingestion in background
     background_tasks.add_task(run_ingestion, task_id, req.doc_id, req.filename, file_path)
 
     return {"task_id": task_id, "status": "processing"}
@@ -152,62 +152,38 @@ async def ingest_document(req: IngestRequest, background_tasks: BackgroundTasks)
 
 def run_ingestion(task_id: str, doc_id: str, filename: str, file_path: str):
     """Background task that performs the actual document ingestion."""
-    global chunker, vector_store, embedder
+    global chunker, vector_store, embedder, bm25_indexer
 
     print(f"[Ingest][{task_id}] Starting ingestion for {filename}")
 
-    result = {"text": None, "error": None}
+    text = None
+    error = None
 
     if filename.endswith(".pdf"):
-        import subprocess
-
-        PYTHON_EXE = r"D:\code\ai\rag\python\.venv\Scripts\python.exe"
-
-        # Use subprocess with timeout to prevent pdfplumber from hanging
-        # on complex PDFs (calls C extension that can't be interrupted by threads)
-        parse_script = f"""
-import sys
-sys.path.insert(0, r'D:\\code\\ai\\rag\\python\\src')
-from core.chunker.pdf_parser import extract_text_from_pdf
-print(extract_text_from_pdf({repr(file_path)}))
-"""
         try:
-            proc = subprocess.run(
-                [PYTHON_EXE, "-c", parse_script],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                encoding="utf-8",
-                errors="replace",
-                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
-            )
-            if proc.returncode == 0:
-                result["text"] = proc.stdout
-            else:
-                result["error"] = proc.stderr[:500] if proc.stderr else "Unknown parse error"
-        except subprocess.TimeoutExpired:
-            result["error"] = f"Timeout: parsing exceeded 120s for {filename}"
+            text = extract_text_from_pdf(file_path)
+        except Exception as e:
+            error = f"PDF extraction failed: {e}"
     elif filename.endswith(".docx"):
         try:
-            result["text"] = extract_text_from_docx(file_path)
+            text = extract_text_from_docx(file_path)
         except Exception as e:
-            result["error"] = str(e)
+            error = f"DOCX extraction failed: {e}"
     elif filename.endswith(".txt"):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
-                result["text"] = f.read()
+                text = f.read()
         except Exception as e:
-            result["error"] = str(e)
+            error = f"TXT read failed: {e}"
     else:
-        result["error"] = f"Unsupported file type: {filename}"
+        error = f"Unsupported file type: {filename}"
 
-    if result["error"]:
-        print(f"[Ingest][{task_id}] Failed: {result['error']}")
+    if error:
+        print(f"[Ingest][{task_id}] Failed: {error}")
         task_store[task_id]["status"] = "failed"
-        task_store[task_id]["error"] = result["error"]
+        task_store[task_id]["error"] = error
         return
 
-    text = result["text"]
     print(f"[Ingest][{task_id}] Parsed {len(text)} chars from {filename}")
 
     try:
@@ -218,6 +194,11 @@ print(extract_text_from_pdf({repr(file_path)}))
 
         embeddings = embedder.embed([c.content for c in chunks])
         vector_store.add_chunks(chunks, embeddings, source=filename)
+
+        # Build BM25 index for this document
+        if bm25_indexer:
+            bm25_indexer.add_chunks(chunks)
+            print(f"[Ingest][{task_id}] BM25 index updated with {len(chunks)} chunks")
 
         print(f"[Ingest][{task_id}] Completed: {len(chunks)} chunks stored")
 
@@ -251,8 +232,8 @@ async def get_task_status(task_id: str):
 
 @app.post("/reset_db")
 async def reset_db():
-    """Clear all documents from ChromaDB (for testing)."""
-    global vector_store
+    """Clear all documents from ChromaDB and reset BM25 index."""
+    global vector_store, bm25_indexer
     if not vector_store:
         raise HTTPException(status_code=500, detail="Service not initialized")
     try:
@@ -262,7 +243,11 @@ async def reset_db():
         except Exception as col_err:
             print(f"[ResetDB] Collection delete skipped (may not exist): {col_err}")
         vector_store._collection = None
-        print("[ResetDB] Collection reference reset (will auto-recreate on next access)")
+        # Reset BM25 index
+        if bm25_indexer:
+            bm25_indexer.reset()
+            print("[ResetDB] BM25 index reset")
+        print("[ResetDB] All reset complete")
         return {"status": "ok", "message": "ChromaDB reset complete"}
     except Exception as e:
         print(f"[ResetDB] Error: {e}")
