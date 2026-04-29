@@ -177,6 +177,9 @@ print(extract_text_from_pdf({repr(file_path)}))
                 capture_output=True,
                 text=True,
                 timeout=120,
+                encoding="utf-8",
+                errors="replace",
+                env={**os.environ, "PYTHONIOENCODING": "utf-8"},
             )
             if proc.returncode == 0:
                 result["text"] = proc.stdout
