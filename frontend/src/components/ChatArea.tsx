@@ -2,7 +2,7 @@ import { useState, useRef, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import toast from 'react-hot-toast'
-import { Send, Bot, User, ChevronRight, Loader2, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { Send, Bot, User, ChevronRight, Loader2, ChevronDown, ChevronUp, Trash2, Globe, FileText } from 'lucide-react'
 
 
 interface Message {
@@ -60,10 +60,11 @@ function MessageBubble({ msg }: { msg: Message }) {
 const API_BASE = 'http://127.0.0.1:8080/api/v1'
 const STORAGE_KEY = 'lumina_chat_history'
 
-export default function ChatArea() {
+export default function ChatArea({ currentDoc }: { currentDoc: string | null }) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
+  const [searchScope, setSearchScope] = useState<'global' | 'doc'>('global')
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const requestInFlight = useRef(false)
 
@@ -116,6 +117,7 @@ export default function ChatArea() {
       id: Date.now().toString(),
       role: 'user',
       content: input,
+      reasoning: '',
     }
 
     setMessages(prev => [...prev, userMessage])
@@ -140,7 +142,8 @@ export default function ChatArea() {
           messages: [
             { role: 'user', content: input }
           ],
-          stream: true
+          stream: true,
+          doc_id: searchScope === 'doc' && currentDoc ? currentDoc : null,
         }),
       })
 
@@ -223,14 +226,44 @@ export default function ChatArea() {
         <>
           <div className="flex items-center justify-between px-6 pt-4">
             <span className="text-sm text-gray-400">{messages.length} 条消息</span>
-            <button
-              onClick={handleClearSession}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-              title="清空当前会话"
-            >
-              <Trash2 className="w-4 h-4" />
-              清空会话
-            </button>
+            <div className="flex items-center gap-3">
+              {/* Search scope toggle */}
+              <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
+                <button
+                  onClick={() => setSearchScope('global')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors ${
+                    searchScope === 'global'
+                      ? 'bg-white shadow-sm text-indigo-600 font-medium'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  title="全局搜索：跨所有文档检索"
+                >
+                  <Globe className="w-4 h-4" />
+                  全局
+                </button>
+                <button
+                  onClick={() => setSearchScope('doc')}
+                  disabled={!currentDoc}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                    searchScope === 'doc'
+                      ? 'bg-white shadow-sm text-indigo-600 font-medium'
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                  title={currentDoc ? `当前文档检索：仅在「${currentDoc}」中搜索` : '请先选择一个文档'}
+                >
+                  <FileText className="w-4 h-4" />
+                  当前文档
+                </button>
+              </div>
+              <button
+                onClick={handleClearSession}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                title="清空当前会话"
+              >
+                <Trash2 className="w-4 h-4" />
+                清空会话
+              </button>
+            </div>
           </div>
           <div className="flex-1 overflow-y-auto p-6 space-y-6">
           {messages.map(msg => (
