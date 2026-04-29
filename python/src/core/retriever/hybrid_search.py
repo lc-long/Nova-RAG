@@ -35,9 +35,10 @@ class HybridRetriever:
         self.rrf_k = rrf_k
         self.rewriter = rewriter or QueryRewriter()
 
-    def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
+    def retrieve(self, query: str, top_k: int = 5, doc_id: Optional[str] = None) -> list[dict]:
         """Hybrid search: multi-query expanded vector + BM25 with RRF fusion.
 
+        If doc_id is provided, scope search to that document only.
         Scaling: initial recall pool = top_k * 6 (30 when top_k=5),
         output after RRF = _OUTPUT_TOP_K (20).
         """
@@ -56,12 +57,12 @@ class HybridRetriever:
             filename_hint = file_match.group(1).lower()
             dense_results = self._metadata_search(filename_hint, recall_k)
         else:
-            dense_results = self._multi_query_vector_search(rewritten_queries, recall_k)
+            dense_results = self._multi_query_vector_search(rewritten_queries, recall_k, doc_id)
 
         # --- BM25 (sparse) retrieval across all query variants ---
         sparse_results = []
         if self.bm25_indexer:
-            sparse_ids = self._multi_query_bm25_search(rewritten_queries, recall_k)
+            sparse_ids = self._multi_query_bm25_search(rewritten_queries, recall_k, doc_id)
             for chunk_id, bm25_score in sparse_ids:
                 content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
                 doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
@@ -86,20 +87,17 @@ class HybridRetriever:
         fused = self._rrf_fuse(dense_results, sparse_results, _OUTPUT_TOP_K)
         return fused
 
-    def _multi_query_vector_search(self, queries: list[str], top_k: int) -> list[dict]:
+    def _multi_query_vector_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
         """Run vector search across multiple query variants, merge results.
 
-        For each query variant, we collect results and keep the best distance
-        for each chunk across all queries. This expands recall beyond what
-        a single query can achieve.
+        If doc_id is provided, scope search to that document only.
         """
-        chunk_best: dict[str, dict] = {}  # chunk_id -> result dict with best distance
+        chunk_best: dict[str, dict] = {}
 
         for q in queries:
-            # Normalize query to match BM25 normalization
             normalized_q = _normalize_text(q)
             query_embedding = self.embedder.embed([normalized_q])[0]
-            results = self._vector_search(query_embedding, top_k)
+            results = self._vector_search(query_embedding, top_k, doc_id)
             for r in results:
                 key = r.get("child_id") or r.get("parent_id")
                 if key is None:
@@ -112,16 +110,15 @@ class HybridRetriever:
 
         return list(chunk_best.values())
 
-    def _multi_query_bm25_search(self, queries: list[str], top_k: int) -> list[tuple[str, float]]:
+    def _multi_query_bm25_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[tuple[str, float]]:
         """Run BM25 search across multiple query variants, merge by best score.
 
-        For each chunk, we take the maximum BM25 score across all query variants.
-        Text normalization is handled inside BM25Indexer.search().
+        If doc_id is provided, search only that document's chunks.
         """
         chunk_best_score: dict[str, float] = {}
 
         for q in queries:
-            results = self.bm25_indexer.search(q, top_k=top_k)
+            results = self.bm25_indexer.search(q, top_k=top_k, doc_id=doc_id)
             for chunk_id, score in results:
                 if chunk_id not in chunk_best_score or score > chunk_best_score[chunk_id]:
                     chunk_best_score[chunk_id] = score
@@ -208,9 +205,9 @@ class HybridRetriever:
 
         return chunks
 
-    def _vector_search(self, query_embedding: list[float], top_k: int) -> list[dict]:
-        """Standard ChromaDB vector search with parent-child assembly."""
-        results = self.vector_store.query(query_embedding, top_k)
+    def _vector_search(self, query_embedding: list[float], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
+        """Standard ChromaDB vector search with parent-child assembly, optionally filtered by doc_id."""
+        results = self.vector_store.query(query_embedding, top_k, doc_id=doc_id)
         chunks = []
         seen_parent_ids = set()
         seen_texts = set()

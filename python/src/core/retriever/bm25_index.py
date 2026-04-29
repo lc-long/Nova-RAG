@@ -82,24 +82,29 @@ class BM25Indexer:
 
         self._save()
 
-    def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        """Search BM25 index, return [(chunk_id, score)] sorted by score descending."""
-        # Normalize query to match indexed content
+    def search(self, query: str, top_k: int = 10, doc_id: Optional[str] = None) -> list[tuple[str, float]]:
+        """Search BM25 index, return [(chunk_id, score)] sorted by score descending.
+
+        If doc_id is provided, search only that document's chunks.
+        """
         normalized_query = _normalize_text(query)
         query_tokens = list(jieba.cut(normalized_query))
         all_results: dict[str, float] = {}
 
-        for doc_id, idx_data in self.doc_indexes.items():
-            bm25 = idx_data["bm25"]
-            scores = bm25.get_scores(query_tokens)
+        doc_ids_to_search = [doc_id] if doc_id else list(self.doc_indexes.keys())
+
+        for did in doc_ids_to_search:
+            if did not in self.doc_indexes:
+                continue
+            idx_data = self.doc_indexes[did]
+            bm25_model = idx_data["bm25"]
+            scores = bm25_model.get_scores(query_tokens)
             chunk_ids = idx_data["chunk_ids"]
             for chunk_id, score in zip(chunk_ids, scores):
                 if score > 0:
-                    # For duplicate chunk_ids across docs, keep the highest score
                     if chunk_id not in all_results or score > all_results[chunk_id]:
                         all_results[chunk_id] = score
 
-        # Sort by score descending
         sorted_results = sorted(all_results.items(), key=lambda x: x[1], reverse=True)
         return sorted_results[:top_k]
 

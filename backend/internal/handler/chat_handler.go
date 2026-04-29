@@ -30,6 +30,7 @@ type Message struct {
 type QueryRequest struct {
 	Messages []Message `json:"messages"`
 	Stream   bool      `json:"stream"`
+	DocId    string    `json:"doc_id,omitempty"`
 }
 
 func (h *ChatHandler) Completions(c *gin.Context) {

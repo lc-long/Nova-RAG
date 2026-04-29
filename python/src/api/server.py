@@ -49,6 +49,7 @@ task_store: dict = {}
 class QueryRequest(BaseModel):
     messages: list[dict]
     stream: bool = True
+    doc_id: Optional[str] = None
 
 
 @app.on_event("startup")
@@ -72,7 +73,7 @@ async def process_query(request: QueryRequest):
     messages = [Message(**m) for m in request.messages]
     last_query = messages[-1].content if messages else ""
 
-    context_chunks = retriever.retrieve(last_query, top_k=5)
+    context_chunks = retriever.retrieve(last_query, top_k=5, doc_id=request.doc_id)
     if not context_chunks:
         context_chunks = []
 

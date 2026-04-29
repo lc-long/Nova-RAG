@@ -65,11 +65,13 @@ class VectorStore:
             metadatas=metadatas
         )
 
-    def query(self, query_embedding: list[float], top_k: int = 5) -> dict:
-        """Query the store for similar chunks."""
+    def query(self, query_embedding: list[float], top_k: int = 5, doc_id: Optional[str] = None) -> dict:
+        """Query the store for similar chunks, optionally filtered by doc_id."""
+        where_filter = {"doc_id": doc_id} if doc_id else None
         results = self.collection.query(
             query_embeddings=[query_embedding],
             n_results=top_k,
+            where=where_filter,
             include=["documents", "metadatas", "distances"]
         )
         return results
