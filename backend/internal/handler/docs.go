@@ -226,6 +226,11 @@ func (h *DocsHandler) Delete(c *gin.Context) {
 		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 		return
 	}
+
+	// Remove the local uploaded file
+	filePath := filepath.Join(h.uploadDir, doc.ID+"_"+doc.Name)
+	os.Remove(filePath)
+
 	h.db.DB.Delete(&doc)
 	c.JSON(http.StatusOK, gin.H{"status": "deleted"})
 }

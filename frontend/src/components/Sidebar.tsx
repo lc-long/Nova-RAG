@@ -13,6 +13,7 @@ interface Document {
   name: string
   size: string
   date: string
+  status?: string
 }
 
 const API_BASE = 'http://127.0.0.1:8080/api/v1'
@@ -35,6 +36,18 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
       toast.error('网络错误：无法连接到 Go 后端服务器')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDelete = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!window.confirm('确定要删除该文档吗？')) return
+    try {
+      await axios.delete(`${API_BASE}/docs/${id}`)
+      setDocs(prev => prev.filter(d => d.id !== id))
+      toast.success('文档已删除')
+    } catch {
+      toast.error('删除失败，请重试')
     }
   }
 
@@ -128,8 +141,12 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
                   <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
                   <p className="text-xs text-gray-500">{doc.size}</p>
                 </div>
-                <button className="opacity-0 group-hover:opacity-100 p-1 hover:bg-gray-200 rounded transition-opacity">
-                  <Trash2 className="w-4 h-4 text-gray-400" />
+                <button
+                  onClick={(e) => handleDelete(doc.id, e)}
+                  className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 hover:text-red-500 rounded transition-opacity"
+                  title="删除文档"
+                >
+                  <Trash2 className="w-4 h-4" />
                 </button>
               </div>
             ))}
