@@ -9,6 +9,7 @@ type Document struct {
 	Name      string    `gorm:"type:varchar(255)" json:"name"`
 	Size      int64     `json:"size"`
 	Status    string    `gorm:"type:varchar(50)" json:"status"`
+	TaskId    string    `gorm:"type:varchar(36)" json:"task_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

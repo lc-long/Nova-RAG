@@ -9,7 +9,7 @@ load_dotenv()
 
 os.environ["HF_ENDPOINT"] = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
 
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -38,6 +38,10 @@ embedder: Optional[SentenceTransformerEmbedder] = None
 retriever: Optional[ChromaRetriever] = None
 chunker: Optional[ParentChildChunker] = None
 llm_client: Optional[MinimaxClient] = None
+
+# In-memory task store for async ingestion tracking
+# task_id -> {"status": "processing"|"completed"|"failed", "result": ..., "error": ...}
+task_store: dict = {}
 
 
 class QueryRequest(BaseModel):
@@ -117,42 +121,129 @@ class IngestRequest(BaseModel):
 
 
 @app.post("/ingest")
-async def ingest_document(req: IngestRequest):
-    """Ingest a document from a file path (called by Go backend)."""
+async def ingest_document(req: IngestRequest, background_tasks: BackgroundTasks):
+    """Ingest a document asynchronously. Returns immediately with a task_id.
+
+    Go backend should poll GET /task_status/{task_id} for completion.
+    """
     if not chunker or not vector_store or not embedder:
         raise HTTPException(status_code=500, detail="Service not initialized")
 
+    task_id = str(uuid.uuid4())
     file_path = req.file_path
-    print(f"[Ingest] Received: doc_id={req.doc_id} filename={req.filename} file_path={file_path}")
 
-    if not os.path.exists(file_path):
-        print(f"[Ingest] ERROR: file not found at {file_path}")
-        raise HTTPException(status_code=404, detail=f"File not found: {file_path}")
+    print(f"[Ingest] Queued: doc_id={req.doc_id} task_id={task_id} filename={req.filename}")
+
+    # Register task as processing
+    task_store[task_id] = {
+        "status": "processing",
+        "doc_id": req.doc_id,
+        "filename": req.filename,
+        "result": None,
+        "error": None,
+        "chunks": 0,
+    }
+
+    # Schedule actual ingestion in background
+    background_tasks.add_task(run_ingestion, task_id, req.doc_id, req.filename, file_path)
+
+    return {"task_id": task_id, "status": "processing"}
+
+
+def run_ingestion(task_id: str, doc_id: str, filename: str, file_path: str):
+    """Background task that performs the actual document ingestion."""
+    global chunker, vector_store, embedder
+
+    print(f"[Ingest][{task_id}] Starting ingestion for {filename}")
+
+    result = {"text": None, "error": None}
+
+    if filename.endswith(".pdf"):
+        import subprocess
+
+        PYTHON_EXE = r"D:\code\ai\rag\python\.venv\Scripts\python.exe"
+
+        # Use subprocess with timeout to prevent pdfplumber from hanging
+        # on complex PDFs (calls C extension that can't be interrupted by threads)
+        parse_script = f"""
+import sys
+sys.path.insert(0, r'D:\\code\\ai\\rag\\python\\src')
+from core.chunker.pdf_parser import extract_text_from_pdf
+print(extract_text_from_pdf({repr(file_path)}))
+"""
+        try:
+            proc = subprocess.run(
+                [PYTHON_EXE, "-c", parse_script],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if proc.returncode == 0:
+                result["text"] = proc.stdout
+            else:
+                result["error"] = proc.stderr[:500] if proc.stderr else "Unknown parse error"
+        except subprocess.TimeoutExpired:
+            result["error"] = f"Timeout: parsing exceeded 120s for {filename}"
+    elif filename.endswith(".docx"):
+        try:
+            result["text"] = extract_text_from_docx(file_path)
+        except Exception as e:
+            result["error"] = str(e)
+    elif filename.endswith(".txt"):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                result["text"] = f.read()
+        except Exception as e:
+            result["error"] = str(e)
+    else:
+        result["error"] = f"Unsupported file type: {filename}"
+
+    if result["error"]:
+        print(f"[Ingest][{task_id}] Failed: {result['error']}")
+        task_store[task_id]["status"] = "failed"
+        task_store[task_id]["error"] = result["error"]
+        return
+
+    text = result["text"]
+    print(f"[Ingest][{task_id}] Parsed {len(text)} chars from {filename}")
 
     try:
-        if req.filename.endswith(".pdf"):
-            text = extract_text_from_pdf(file_path)
-        elif req.filename.endswith(".docx"):
-            text = extract_text_from_docx(file_path)
-        elif req.filename.endswith(".txt"):
-            with open(file_path, "r", encoding="utf-8") as f:
-                text = f.read()
-        else:
-            raise HTTPException(status_code=400, detail="Unsupported file type")
+        chunks = chunker.chunk(text, doc_id)
+        prefix = f"[来源文件：{filename}]\n"
+        for chunk in chunks:
+            chunk.content = prefix + chunk.content
+
+        embeddings = embedder.embed([c.content for c in chunks])
+        vector_store.add_chunks(chunks, embeddings, source=filename)
+
+        print(f"[Ingest][{task_id}] Completed: {len(chunks)} chunks stored")
+
+        task_store[task_id]["status"] = "completed"
+        task_store[task_id]["result"] = "processed"
+        task_store[task_id]["chunks"] = len(chunks)
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Extraction failed: {e}")
+        print(f"[Ingest][{task_id}] Failed: {e}")
+        task_store[task_id]["status"] = "failed"
+        task_store[task_id]["error"] = str(e)
 
-    doc_id = req.doc_id
-    chunks = chunker.chunk(text, doc_id)
-    # Prefix each chunk content with source filename for semantic matching
-    prefix = f"[来源文件：{req.filename}]\n"
-    for chunk in chunks:
-        chunk.content = prefix + chunk.content
 
-    embeddings = embedder.embed([c.content for c in chunks])
-    vector_store.add_chunks(chunks, embeddings, source=req.filename)
+@app.get("/task_status/{task_id}")
+async def get_task_status(task_id: str):
+    """Return the status of an async ingestion task."""
+    if task_id not in task_store:
+        raise HTTPException(status_code=404, detail=f"Task not found: {task_id}")
 
-    return {"doc_id": doc_id, "status": "processed", "chunks": len(chunks)}
+    task = task_store[task_id]
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "doc_id": task.get("doc_id"),
+        "filename": task.get("filename"),
+        "result": task.get("result"),
+        "error": task.get("error"),
+        "chunks": task.get("chunks", 0),
+    }
 
 
 @app.post("/reset_db")
@@ -162,9 +253,11 @@ async def reset_db():
     if not vector_store:
         raise HTTPException(status_code=500, detail="Service not initialized")
     try:
-        vector_store.client.delete_collection(name=vector_store.collection_name)
-        print("[ResetDB] Collection deleted")
-        # 重置 server 端引用，让下次访问时自动重建
+        try:
+            vector_store.client.delete_collection(name=vector_store.collection_name)
+            print("[ResetDB] Collection deleted")
+        except Exception as col_err:
+            print(f"[ResetDB] Collection delete skipped (may not exist): {col_err}")
         vector_store._collection = None
         print("[ResetDB] Collection reference reset (will auto-recreate on next access)")
         return {"status": "ok", "message": "ChromaDB reset complete"}

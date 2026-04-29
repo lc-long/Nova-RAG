@@ -17,10 +17,10 @@ import (
 )
 
 type DocsHandler struct {
-	uploadDir string
-	db        *storage.Database
-	pythonHost string
-	pythonPort string
+	uploadDir   string
+	db          *storage.Database
+	pythonHost  string
+	pythonPort  string
 }
 
 func NewDocsHandler(db *storage.Database, pythonHost, pythonPort string) *DocsHandler {
@@ -113,22 +113,109 @@ func (h *DocsHandler) ingestToPython(docID, filename, filePath string) {
 	}
 	defer resp.Body.Close()
 
+	bodyBytes, _ := io.ReadAll(resp.Body)
+
 	if resp.StatusCode == 200 {
-		bodyBytes, _ := io.ReadAll(resp.Body)
+		// Parse Python's async response: {"task_id": "xxx", "status": "processing"}
+		var pyResp map[string]interface{}
+		if json.Unmarshal(bodyBytes, &pyResp) == nil {
+			if taskID, ok := pyResp["task_id"].(string); ok && taskID != "" {
+				h.db.DB.Model(&model.Document{}).Where("id = ?", docID).Updates(map[string]interface{}{
+					"status":  "processing",
+					"task_id": taskID,
+				})
+				fmt.Printf("[DocsHandler] Ingest queued for %s: task_id=%s\n", filename, taskID)
+				// Start background polling for this task
+				go h.pollTaskStatus(docID, taskID)
+				return
+			}
+		}
+		// Fallback: Python returned old synchronous format
 		fmt.Printf("[DocsHandler] Ingest OK for %s: %s\n", filename, string(bodyBytes))
 		h.db.DB.Model(&model.Document{}).Where("id = ?", docID).Updates(map[string]interface{}{
 			"status": "ready",
 		})
 	} else {
-		bodyBytes, _ := io.ReadAll(resp.Body)
 		fmt.Printf("[DocsHandler] Ingest failed for %s [%d]: %s\n", filename, resp.StatusCode, string(bodyBytes))
 		h.db.DB.Model(&model.Document{}).Where("id = ?", docID).Update("status", "failed")
+	}
+}
+
+func (h *DocsHandler) pollTaskStatus(docID, taskId string) {
+	url := fmt.Sprintf("http://127.0.0.1:%s/task_status/%s", h.pythonPort, taskId)
+
+	for {
+		time.Sleep(2 * time.Second)
+
+		req, _ := http.NewRequest("GET", url, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Printf("[DocsHandler] pollTaskStatus error for %s: %v\n", taskId, err)
+			continue
+		}
+
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			fmt.Printf("[DocsHandler] pollTaskStatus bad status for %s: %d\n", taskId, resp.StatusCode)
+			continue
+		}
+
+		var statusResp map[string]interface{}
+		if json.Unmarshal(bodyBytes, &statusResp) != nil {
+			continue
+		}
+
+		status, _ := statusResp["status"].(string)
+		if status == "completed" {
+			h.db.DB.Model(&model.Document{}).Where("id = ?", docID).Update("status", "ready")
+			fmt.Printf("[DocsHandler] Task %s completed, doc %s marked ready\n", taskId, docID)
+			return
+		} else if status == "failed" {
+			h.db.DB.Model(&model.Document{}).Where("id = ?", docID).Update("status", "failed")
+			fmt.Printf("[DocsHandler] Task %s failed for doc %s\n", taskId, docID)
+			return
+		}
+		// "processing" — keep polling
 	}
 }
 
 func (h *DocsHandler) List(c *gin.Context) {
 	var docs []model.Document
 	h.db.DB.Order("created_at desc").Find(&docs)
+
+	// Refresh status from Python for any document with a task_id in processing state
+	for i := range docs {
+		doc := &docs[i]
+		if doc.TaskId == "" || doc.Status != "processing" {
+			continue
+		}
+		url := fmt.Sprintf("http://127.0.0.1:%s/task_status/%s", h.pythonPort, doc.TaskId)
+		req, _ := http.NewRequest("GET", url, nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil || resp == nil {
+			continue
+		}
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			continue
+		}
+		var statusResp map[string]interface{}
+		if json.Unmarshal(bodyBytes, &statusResp) == nil {
+			if status, ok := statusResp["status"].(string); ok {
+				if status == "completed" {
+					h.db.DB.Model(doc).Update("status", "ready")
+					doc.Status = "ready"
+				} else if status == "failed" {
+					h.db.DB.Model(doc).Update("status", "failed")
+					doc.Status = "failed"
+				}
+			}
+		}
+	}
+
 	c.JSON(http.StatusOK, docs)
 }
 
