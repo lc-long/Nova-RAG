@@ -115,3 +115,15 @@ class BM25Indexer:
         self.chunk_id_to_content.clear()
         if self.index_file.exists():
             self.index_file.unlink()
+
+    def delete_doc(self, doc_id: str):
+        """Remove a document's entries from the BM25 index."""
+        if doc_id in self.doc_indexes:
+            del self.doc_indexes[doc_id]
+        chunk_ids_to_remove = [
+            cid for cid, did in self.chunk_id_to_doc.items() if did == doc_id
+        ]
+        for cid in chunk_ids_to_remove:
+            self.chunk_id_to_doc.pop(cid, None)
+            self.chunk_id_to_content.pop(cid, None)
+        self._save()

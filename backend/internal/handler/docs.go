@@ -227,6 +227,16 @@ func (h *DocsHandler) Delete(c *gin.Context) {
 		return
 	}
 
+	// Remove from ChromaDB + BM25 via Python service
+	go func(docID string) {
+		url := fmt.Sprintf("http://127.0.0.1:%s/chunks/%s", h.pythonPort, docID)
+		req, _ := http.NewRequest("DELETE", url, nil)
+		resp, _ := http.DefaultClient.Do(req)
+		if resp != nil {
+			resp.Body.Close()
+		}
+	}(doc.ID)
+
 	// Remove the local uploaded file
 	filePath := filepath.Join(h.uploadDir, doc.ID+"_"+doc.Name)
 	os.Remove(filePath)

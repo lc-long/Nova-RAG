@@ -263,6 +263,22 @@ async def reset_db():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.delete("/chunks/{doc_id}")
+async def delete_chunks_by_doc(doc_id: str):
+    """Delete all chunks for a specific document from ChromaDB and BM25 index."""
+    global vector_store, bm25_indexer
+    if not vector_store:
+        raise HTTPException(status_code=500, detail="Service not initialized")
+    try:
+        deleted_count = vector_store.delete_by_doc_id(doc_id)
+        if bm25_indexer:
+            bm25_indexer.delete_doc(doc_id)
+        return {"status": "ok", "deleted": deleted_count}
+    except Exception as e:
+        print(f"[DeleteChunks] Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     print("[Lumina Insight] Starting server on http://0.0.0.0:5000")
     uvicorn.run(app, host="0.0.0.0", port=5000)

@@ -82,3 +82,18 @@ class VectorStore:
             where={"parent_id": parent_id}
         )
         return results
+
+    def delete_by_doc_id(self, doc_id: str) -> int:
+        """Delete all chunks belonging to a document. Returns count of deleted chunks."""
+        try:
+            results = self.collection.get(
+                where={"doc_id": doc_id},
+                include=[]
+            )
+            if results["ids"]:
+                ids_to_delete = results["ids"]
+                self.collection.delete(ids=ids_to_delete)
+                return len(ids_to_delete)
+        except Exception as e:
+            print(f"[VectorStore] delete_by_doc_id error: {e}")
+        return 0
