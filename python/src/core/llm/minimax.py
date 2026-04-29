@@ -74,7 +74,6 @@ class MinimaxClient:
         if response.status_code != 200:
             raise Exception(f"Minimax API error: {response.status_code} - {response.text}")
 
-        # Use sseclient-py for proper SSE parsing
         from sseclient import SSEClient
 
         client = SSEClient(response)
@@ -142,8 +141,14 @@ class MinimaxClient:
     def _build_prompt(self, messages: list[Message], context: str) -> str:
         """Build full prompt with context and messages."""
         history = "\n".join([f"{m.role}: {m.content}" for m in messages])
-        return f"""你是一个企业知识库助手。请严格根据提供的上下文信息回答用户问题。
+        return f"""你是一个严谨的企业知识库助手。请严格根据提供的上下文信息回答用户问题。
 如果上下文中没有相关信息，请明确告知用户"抱歉，我在知识库中未找到相关内容"。
+
+请特别注意：
+1. 用户的问题可能在文档中有**多个不同场景的答案**（例如不同的飞行模式、不同的操作条件、不同的地区规定）。
+2. 请务必仔细阅读所有提供的上下文片段，提取出**所有符合条件**的场景并分点列出，绝不能只回答第一个找到的场景就停止。
+3. 如果上下文中没有提及某个具体数值（如限制距离50m），请明确指出"该部分信息缺失"，不要编造。
+4. 回答时必须分场景/条件逐一列举，不要混在一起回答。
 
 ## 上下文信息
 {context}

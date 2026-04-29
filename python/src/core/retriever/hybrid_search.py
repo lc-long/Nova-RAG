@@ -7,6 +7,10 @@ from typing import Optional
 
 from .bm25_index import BM25Indexer
 
+# Scale-up constants: initial recall pool before RRF fusion
+_RECALL_MULTIPLIER = 6   # top_k * 6 → initial召回量（原来是 * 2，即 10；现在是 30）
+_OUTPUT_TOP_K = 12        # RRF融合后输出量（原来是 5，现在是 12）
+
 
 class HybridRetriever:
     """Hybrid retriever using vector + BM25 with RRF fusion."""
@@ -25,68 +29,33 @@ class HybridRetriever:
         self.distance_threshold = distance_threshold
         self.rrf_k = rrf_k
 
-    def _build_result_map(
-        self,
-        results: list[dict],
-        rank_offset: int = 0
-    ) -> dict[str, tuple[int, dict]]:
-        """Build {chunk_id: (rank, result_dict)} map for RRF."""
-        result_map = {}
-        for i, r in enumerate(results):
-            key = r.get("child_id") or r.get("parent_id")
-            if key:
-                result_map[key] = (rank_offset + i, r)
-        return result_map
-
-    def _deduplicate_and_enrich(
-        self,
-        result_map: dict[str, tuple[int, dict]]
-    ) -> list[dict]:
-        """Apply parent-child deduplication and return ordered list."""
-        seen_parent_ids = set()
-        seen_texts = set()
-        ordered = sorted(result_map.items(), key=lambda x: x[1][0])
-        chunks = []
-
-        for chunk_id, (rank, r) in ordered:
-            text = r.get("child_content") or r.get("parent_content", "")
-            norm_text = text.replace("\n", " ").strip()
-            if norm_text in seen_texts:
-                continue
-            seen_texts.add(norm_text)
-
-            parent_id = r.get("parent_id")
-            if r.get("child_id") and parent_id:
-                if parent_id in seen_parent_ids:
-                    continue
-                seen_parent_ids.add(parent_id)
-                chunks.append(r)
-            else:
-                chunks.append(r)
-
-        return chunks
-
     def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
-        """Hybrid search: vector + BM25 with RRF fusion."""
+        """Hybrid search: vector + BM25 with RRF fusion.
+
+        Scaling: initial recall pool = top_k * 6 (30 when top_k=5),
+        output after RRF = _OUTPUT_TOP_K (12).
+        """
+        # Internal scaling: always use expanded pool regardless of caller top_k
+        recall_k = max(top_k * _RECALL_MULTIPLIER, _OUTPUT_TOP_K)
+
         # --- Vector (dense) retrieval ---
         file_match = re.search(r'([^\s/\\]+\.(?:pdf|docx))', query, re.IGNORECASE)
 
         if file_match:
             filename_hint = file_match.group(1).lower()
-            dense_results = self._metadata_search(filename_hint, top_k * 2)
+            dense_results = self._metadata_search(filename_hint, recall_k)
         else:
             query_embedding = self.embedder.embed([query])[0]
-            dense_results = self._vector_search(query_embedding, top_k * 2)
+            dense_results = self._vector_search(query_embedding, recall_k)
 
         # --- BM25 (sparse) retrieval ---
         sparse_results = []
         if self.bm25_indexer:
-            sparse_ids = self.bm25_indexer.search(query, top_k=top_k * 2)
+            sparse_ids = self.bm25_indexer.search(query, top_k=recall_k)
             for chunk_id, bm25_score in sparse_ids:
                 content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
                 doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
                 parent_id = ""
-                # Get parent_id from vector store if needed
                 try:
                     vec_result = self.vector_store.collection.get(ids=[chunk_id])
                     if vec_result["metadatas"]:
@@ -104,7 +73,7 @@ class HybridRetriever:
                 })
 
         # --- RRF Fusion ---
-        fused = self._rrf_fuse(dense_results, sparse_results, top_k)
+        fused = self._rrf_fuse(dense_results, sparse_results, _OUTPUT_TOP_K)
         return fused
 
     def _rrf_fuse(
@@ -119,7 +88,6 @@ class HybridRetriever:
         for rank, result in enumerate(dense_results):
             key = result.get("child_id") or result.get("parent_id")
             if key:
-                # Normalize distance to a relevance-like score (lower distance = higher relevance)
                 distance = result.get("distance", 0)
                 vec_score = 1.0 / (self.rrf_k + distance)
                 rrf_scores[key] = rrf_scores.get(key, 0) + vec_score
@@ -127,9 +95,8 @@ class HybridRetriever:
         for rank, result in enumerate(sparse_results):
             key = result.get("child_id") or result.get("parent_id")
             if key:
-                # BM25 score is already a relevance score (higher = better)
                 bm25_score = result.get("distance", 0)
-                sparse_normalized = bm25_score / 10.0  # normalize to similar range
+                sparse_normalized = bm25_score / 10.0
                 rrf_scores[key] = rrf_scores.get(key, 0) + sparse_normalized
 
         # Build result map with all metadata
@@ -144,7 +111,6 @@ class HybridRetriever:
                 if key not in all_results:
                     all_results[key] = r
 
-        # Sort by RRF score
         sorted_keys = sorted(rrf_scores, key=lambda k: rrf_scores[k], reverse=True)
 
         chunks = []
@@ -218,7 +184,6 @@ class HybridRetriever:
                     "distance": distance
                 })
 
-        # Fallback without distance filter
         if not chunks:
             results_relaxed = self.vector_store.query(query_embedding, top_k)
             for i in range(len(results_relaxed["ids"][0])):
