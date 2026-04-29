@@ -18,6 +18,7 @@ import uvicorn
 from ..core.chunker.parent_child import ParentChildChunker
 from ..core.chunker.pdf_parser import extract_text_from_pdf
 from ..core.chunker.docx_parser import extract_text_from_docx
+from ..core.chunker.ppt_parser import extract_text_from_pptx
 from ..core.embedder.sentence_transformer import SentenceTransformerEmbedder
 from ..core.retriever.hybrid_search import HybridRetriever
 from ..core.retriever.bm25_index import BM25Indexer
@@ -102,6 +103,8 @@ async def upload_document(file: UploadFile = File(...)):
             text = extract_text_from_pdf(temp_path)
         elif file.filename.endswith(".docx"):
             text = extract_text_from_docx(temp_path)
+        elif file.filename.endswith(".pptx"):
+            text = extract_text_from_pptx(temp_path)
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type")
     finally:
@@ -169,6 +172,11 @@ def run_ingestion(task_id: str, doc_id: str, filename: str, file_path: str):
             text = extract_text_from_docx(file_path)
         except Exception as e:
             error = f"DOCX extraction failed: {e}"
+    elif filename.endswith(".pptx"):
+        try:
+            text = extract_text_from_pptx(file_path)
+        except Exception as e:
+            error = f"PPTX extraction failed: {e}"
     elif filename.endswith(".txt"):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
