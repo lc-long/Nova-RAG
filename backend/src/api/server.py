@@ -1,4 +1,10 @@
 """FastAPI server for Nova-RAG - Unified Python Backend."""
+import warnings
+
+# Suppress pkg_resources deprecation warning from legacy dependencies like jieba
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resources")
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
+
 import os
 
 from dotenv import load_dotenv
