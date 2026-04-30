@@ -19,6 +19,7 @@ from ..core.chunker.parent_child import ParentChildChunker
 from ..core.chunker.pdf_parser import extract_text_from_pdf
 from ..core.chunker.docx_parser import extract_text_from_docx
 from ..core.chunker.excel_parser import extract_text_from_excel
+from ..core.chunker.csv_parser import extract_text_from_csv
 from ..core.chunker.ppt_parser import extract_text_from_pptx
 from ..core.embedder.sentence_transformer import SentenceTransformerEmbedder
 from ..core.retriever.hybrid_search import HybridRetriever
@@ -107,6 +108,8 @@ async def upload_document(file: UploadFile = File(...)):
             text = extract_text_from_docx(temp_path)
         elif file.filename.endswith(".xlsx"):
             text = extract_text_from_excel(temp_path)
+        elif file.filename.endswith(".csv"):
+            text = extract_text_from_csv(temp_path)
         elif file.filename.endswith(".pptx"):
             text = extract_text_from_pptx(temp_path)
         else:
@@ -181,6 +184,11 @@ def run_ingestion(task_id: str, doc_id: str, filename: str, file_path: str):
             text = extract_text_from_excel(file_path)
         except Exception as e:
             error = f"Excel extraction failed: {e}"
+    elif filename.endswith(".csv"):
+        try:
+            text = extract_text_from_csv(file_path)
+        except Exception as e:
+            error = f"CSV extraction failed: {e}"
     elif filename.endswith(".pptx"):
         try:
             text = extract_text_from_pptx(file_path)
