@@ -2,23 +2,13 @@
 import pandas as pd
 
 
-def _clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Remove completely empty rows and columns to reduce token noise."""
-    # Drop columns that are entirely empty
-    df = df.dropna(axis=1, how="all")
-    # Drop rows that are entirely empty
-    df = df.dropna(axis=0, how="all")
-    # Replace any remaining NaN cells with empty string
-    df = df.fillna("")
-    return df
-
-
 def extract_text_from_excel(file_path: str) -> str:
-    """Extract all sheets from an Excel file as Markdown tables.
+    """Extract all sheets from an Excel file as clean Markdown tables.
 
-    Traverses all visible sheets, converts each to a Markdown table via
-    pandas, and prepends a sheet-name anchor so the LLM knows the data
-    provenance. Empty rows/columns are stripped before conversion.
+    Reads with header=None so merged-cell titles are treated as ordinary data
+    rows — no "Unnamed" column pollution. All-empty rows/columns are stripped,
+    NaN cells are filled with empty strings, and the sheet name is emitted as
+    a semantic anchor before each table.
 
     Args:
         file_path: Path to the .xlsx file.
@@ -30,21 +20,26 @@ def extract_text_from_excel(file_path: str) -> str:
 
     blocks = []
     for sheet_name in xl_file.sheet_names:
-        # Skip hidden sheets (e.g., those starting with underscore)
         if sheet_name.startswith("_"):
             continue
 
-        df = xl_file.parse(sheet_name=sheet_name)
-        df = _clean_dataframe(df)
+        # header=None: treat every row as a data row (no auto header inference)
+        df = xl_file.parse(sheet_name=sheet_name, header=None)
+
+        # Strict cleaning: drop all-empty rows and columns
+        df = df.dropna(axis=1, how="all")
+        df = df.dropna(axis=0, how="all")
+        df = df.fillna("")
 
         if df.empty:
             continue
 
-        # Sheet anchor header
-        blocks.append(f"\n--- [工作表: {sheet_name}] ---\n")
+        # Suppress the auto-generated numeric column labels (0, 1, 2, ...)
+        # by replacing them with empty strings before markdown serialisation
+        df.columns = [""] * len(df.columns)
 
-        # Convert DataFrame to Markdown table (no index column)
-        md_table = df.to_markdown(index=False)
-        blocks.append(md_table)
+        blocks.append(f"\n--- [工作表: {sheet_name}] ---\n")
+        blocks.append(df.to_markdown(index=False))
 
     return "\n".join(blocks)
+
