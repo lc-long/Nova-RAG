@@ -7,14 +7,21 @@ def extract_text_from_excel(file_path: str) -> str:
 
     Reads with header=None so merged-cell titles are treated as ordinary data
     rows — no "Unnamed" column pollution. All-empty rows/columns are stripped,
-    NaN cells are filled with empty strings, and the sheet name is emitted as
-    a semantic anchor before each table.
+    NaN cells are filled with empty strings. Each sheet is prefixed with a
+    semantic header that lists field indices, bridging the lexical gap between
+    natural-language queries and raw numeric table columns.
+
+    Prefix format (per sheet):
+        [文档属性]: 结构化数据表
+        [包含的字段/列名]: 字段1, 字段2, 字段3, ...  (position-based since header=None)
+        [数据内容概要]: 以下是该数据表的具体 Markdown 网格内容。
+        --- 表格数据开始 ---
 
     Args:
         file_path: Path to the .xlsx file.
 
     Returns:
-        All sheets joined as Markdown text with sheet anchors.
+        All sheets joined as Markdown text with semantic headers and anchors.
     """
     xl_file = pd.ExcelFile(file_path)
 
@@ -34,11 +41,23 @@ def extract_text_from_excel(file_path: str) -> str:
         if df.empty:
             continue
 
-        # Suppress the auto-generated numeric column labels (0, 1, 2, ...)
-        # by replacing them with empty strings before markdown serialisation
-        df.columns = [""] * len(df.columns)
+        n_cols = len(df.columns)
+        # Since header=None, generate position-based field names
+        col_list = ", ".join(f"字段{i+1}" for i in range(n_cols))
 
-        blocks.append(f"\n--- [工作表: {sheet_name}] ---\n")
+        # Build semantic prefix for this sheet
+        sheet_prefix = (
+            f"\n--- [工作表: {sheet_name}] ---\n"
+            f"[文档属性]: 结构化数据表\n"
+            f"[包含的字段/列名]: {col_list}\n"
+            f"[数据内容概要]: 以下是该数据表的具体 Markdown 网格内容。\n"
+            f"--- 表格数据开始 ---\n"
+        )
+
+        # Suppress the auto-generated numeric column labels (0, 1, 2, ...)
+        df.columns = [""] * n_cols
+
+        blocks.append(sheet_prefix)
         blocks.append(df.to_markdown(index=False))
 
     return "\n".join(blocks)
