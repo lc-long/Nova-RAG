@@ -1,0 +1,16 @@
+# Nova-RAG 重构纪律 (CRITICAL - 每次操作前必读)
+
+## Git 纪律
+- 每次完成一个小功能块（如：迁移一个API，或者修改一个目录），必须立即进行 `git add` 和 `git commit`。
+- 绝不允许将几千行代码揉在一个 commit 里！
+- Commit message 格式：`type(scope): description`，type 可选值：feat/fix/refactor/build/chore/docs/test
+
+## 重构红线
+- 新后端的 API 路径和出入参（JSON Schema）必须和原 Go 接口保持 100% 像素级一致。
+- 绝不能让前端因为接口不兼容而报错！
+- 任何新增/修改 API 前，必须先在 `.md` 文件中记录原始 Go 接口签名作为对照基准。
+
+## 开发流程
+- 重构顺序：先路由层 → 再服务层 → 最后数据层
+- 每迁移一个完整的 API 簇（如 doc 相关），需同步更新 README 中的 API 文档
+- 文件上传统一走 FastAPI 的 `python-multipart`，不再经过 Go 中转
