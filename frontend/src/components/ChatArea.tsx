@@ -57,7 +57,9 @@ function MessageBubble({ msg }: { msg: Message }) {
   )
 }
 
-const API_BASE = 'http://127.0.0.1:8080/api/v1'
+import { API_BASE_URL } from '../config'
+
+const API_BASE = API_BASE_URL
 const STORAGE_KEY = 'lumina_chat_history'
 
 export default function ChatArea({ currentDoc }: { currentDoc: string | null }) {

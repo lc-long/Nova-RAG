@@ -16,7 +16,9 @@ interface Document {
   status?: string
 }
 
-const API_BASE = 'http://127.0.0.1:8080/api/v1'
+import { API_BASE_URL } from '../config'
+
+const API_BASE = API_BASE_URL
 
 export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
   const [docs, setDocs] = useState<Document[]>([])
