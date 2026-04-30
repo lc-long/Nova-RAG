@@ -4,6 +4,9 @@
 - 每次完成一个小功能块（如：迁移一个API，或者修改一个目录），必须立即进行 `git add` 和 `git commit`。
 - 绝不允许将几千行代码揉在一个 commit 里！
 - Commit message 格式：`type(scope): description`，type 可选值：feat/fix/refactor/build/chore/docs/test
+- **All git commit messages MUST be written strictly in English, following the Conventional Commits standard. NEVER use Chinese in commit messages.**
+
+## 重构红线
 
 ## 重构红线
 - 新后端的 API 路径和出入参（JSON Schema）必须和原 Go 接口保持 100% 像素级一致。
