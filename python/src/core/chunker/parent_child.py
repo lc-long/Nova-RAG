@@ -5,11 +5,14 @@ Key design:
 - Each sub-table is collapsed independently, then treated as a single atomic token
   by RecursiveCharacterTextSplitter (no internal newlines in collapsed form).
 - After chunking, _restore_tables reconstructs full markdown tables.
+- Markdown files use structure-aware heading-based splitting via md_splitter.
 """
 import re
 from dataclasses import dataclass
 from typing import Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+from .md_splitter import split_markdown, MarkdownSection
 
 
 _TABLE_SENTINEL = "\x00TBL\x00"
@@ -24,6 +27,7 @@ class Chunk:
     parent_id: Optional[str] = None
     page_number: Optional[int] = None
     order: int = 0
+    heading_path: Optional[str] = None  # Markdown heading hierarchy, e.g. "## Section\n### Subsection"
 
 
 def _is_table_line(line: str) -> bool:
@@ -379,4 +383,56 @@ class ParentChildChunker:
                         ))
                         child_index += 1
 
+        return chunks
+
+    def chunk_markdown(self, text: str, doc_id: str) -> list[Chunk]:
+        """Split a Markdown document by heading boundaries, preserving heading context.
+
+        Each top-level section becomes a parent chunk; oversized sections are
+        sub-split on paragraph boundaries while retaining the heading prefix.
+        All chunks carry the heading_path metadata so the LLM always sees
+        which section a chunk belongs to.
+        """
+        raw_sections = split_markdown(text, self.parent_chunk_size)
+
+        chunks: list[Chunk] = []
+        parent_count = 0
+
+        for sec in raw_sections:
+            if len(sec.content) <= self.parent_chunk_size:
+                chunk_id = f"{doc_id}_parent_{parent_count}"
+                content = sec.content
+                if sec.heading_path:
+                    content = f"{sec.heading_path}\n\n{sec.content}"
+                chunks.append(Chunk(
+                    chunk_id=chunk_id,
+                    content=content,
+                    doc_id=doc_id,
+                    chunk_type="parent",
+                    parent_id=None,
+                    heading_path=sec.heading_path or None,
+                    order=parent_count
+                ))
+                parent_count += 1
+            else:
+                child_sections = split_markdown(sec.content, self.child_chunk_size)
+                for ci, child_sec in enumerate(child_sections):
+                    child_path = sec.heading_path or ""
+                    child_content = child_sec.content
+                    if child_path:
+                        child_content = f"{child_path}\n\n{child_sec.content}"
+                    chunks.append(Chunk(
+                        chunk_id=f"{doc_id}_parent_{parent_count}_child_{ci}",
+                        content=child_content,
+                        doc_id=doc_id,
+                        chunk_type="child",
+                        parent_id=f"{doc_id}_parent_{parent_count}",
+                        heading_path=child_path or None,
+                        order=ci
+                    ))
+                parent_count += 1
+
+        if chunks:
+            max_len = max(len(c.content) for c in chunks)
+            print(f"[Chunker] doc_id={doc_id} | markdown_parents={parent_count} | max_chars={max_len}")
         return chunks

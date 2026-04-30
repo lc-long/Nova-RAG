@@ -106,7 +106,7 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
           )}
           <input
             type="file"
-            accept=".pdf,.docx,.xlsx,.csv,.pptx,.txt"
+            accept=".pdf,.docx,.xlsx,.csv,.md,.pptx,.txt"
             className="hidden"
             onChange={handleUpload}
             disabled={uploading}

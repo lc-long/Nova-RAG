@@ -112,6 +112,9 @@ async def upload_document(file: UploadFile = File(...)):
             text = extract_text_from_csv(temp_path)
         elif file.filename.endswith(".pptx"):
             text = extract_text_from_pptx(temp_path)
+        elif file.filename.endswith(".md"):
+            with open(temp_path, "r", encoding="utf-8") as f:
+                text = f.read()
         else:
             raise HTTPException(status_code=400, detail="Unsupported file type")
     finally:
@@ -119,7 +122,10 @@ async def upload_document(file: UploadFile = File(...)):
             os.remove(temp_path)
 
     doc_id = str(uuid.uuid4())
-    chunks = chunker.chunk(text, doc_id)
+    if file.filename.endswith(".md"):
+        chunks = chunker.chunk_markdown(text, doc_id)
+    else:
+        chunks = chunker.chunk(text, doc_id)
     embeddings = embedder.embed([c.content for c in chunks])
     vector_store.add_chunks(chunks, embeddings)
 
@@ -194,6 +200,12 @@ def run_ingestion(task_id: str, doc_id: str, filename: str, file_path: str):
             text = extract_text_from_pptx(file_path)
         except Exception as e:
             error = f"PPTX extraction failed: {e}"
+    elif filename.endswith(".md"):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
+        except Exception as e:
+            error = f"MD read failed: {e}"
     elif filename.endswith(".txt"):
         try:
             with open(file_path, "r", encoding="utf-8") as f:
@@ -212,7 +224,10 @@ def run_ingestion(task_id: str, doc_id: str, filename: str, file_path: str):
     print(f"[Ingest][{task_id}] Parsed {len(text)} chars from {filename}")
 
     try:
-        chunks = chunker.chunk(text, doc_id)
+        if filename.endswith(".md"):
+            chunks = chunker.chunk_markdown(text, doc_id)
+        else:
+            chunks = chunker.chunk(text, doc_id)
         prefix = f"[来源文件：{filename}]\n"
         for chunk in chunks:
             chunk.content = prefix + chunk.content
