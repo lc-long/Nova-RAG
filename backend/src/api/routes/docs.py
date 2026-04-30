@@ -1,16 +1,14 @@
 """Document management routes -接管 Go 的 docs handler."""
-import os
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Document
-from ...core.storage.vector_store import VectorStore
+from ..components import vector_store, embedder, bm25_indexer, chunker
 
 router = APIRouter(prefix="/docs", tags=["documents"])
 
@@ -21,7 +19,8 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None
 ):
     """Handle document upload - mirrors Go's DocsHandler.Upload."""
     doc_id = str(uuid.uuid4())
@@ -42,9 +41,7 @@ async def upload_document(
     db.add(doc)
     db.commit()
 
-    # Trigger async ingestion (background task)
-    import asyncio
-    asyncio.create_task(run_ingestion(doc_id, file.filename, str(saved_path), db))
+    background_tasks.add_task(run_ingestion, doc_id, file.filename, str(saved_path))
 
     return {
         "id": doc_id,
@@ -54,21 +51,22 @@ async def upload_document(
     }
 
 
-async def run_ingestion(doc_id: str, filename: str, file_path: str, db: Session):
-    """Background ingestion task - mirrors Go's ingestToPython + pollTaskStatus."""
+def run_ingestion(doc_id: str, filename: str, file_path: str):
+    """Background ingestion task - mirrors Go's ingestToPython."""
     from ...core.chunker.pdf_parser import extract_text_from_pdf
     from ...core.chunker.docx_parser import extract_text_from_docx
     from ...core.chunker.excel_parser import extract_text_from_excel
     from ...core.chunker.csv_parser import extract_text_from_csv
     from ...core.chunker.ppt_parser import extract_text_from_pptx
-    from ...core.chunker.parent_child import ParentChildChunker
-    from ...core.embedder.sentence_transformer import SentenceTransformerEmbedder
-    from ...core.retriever.bm25_index import BM25Indexer
 
-    vector_store = VectorStore(persist_directory="./vector_db")
-    embedder = SentenceTransformerEmbedder()
-    bm25_indexer = BM25Indexer(persist_directory="./vector_db")
-    chunker = ParentChildChunker()
+    _vector_store = vector_store
+    _embedder = embedder
+    _bm25_indexer = bm25_indexer
+    _chunker = chunker
+
+    if not all([_vector_store, _embedder, _bm25_indexer, _chunker]):
+        print(f"[DocsUpload] Components not initialized, skipping ingestion for {filename}")
+        return
 
     try:
         if filename.endswith(".pdf"):
@@ -85,39 +83,42 @@ async def run_ingestion(doc_id: str, filename: str, file_path: str, db: Session)
             with open(file_path, "r", encoding="utf-8") as f:
                 text = f.read()
         else:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type: {filename}")
+            print(f"[DocsUpload] Unsupported file type: {filename}")
+            return
 
         if filename.endswith(".md"):
-            chunks = chunker.chunk_markdown(text, doc_id)
+            chunks = _chunker.chunk_markdown(text, doc_id)
         else:
-            chunks = chunker.chunk(text, doc_id)
+            chunks = _chunker.chunk(text, doc_id)
 
         prefix = f"[来源文件：{filename}]\n"
         for chunk in chunks:
             chunk.content = prefix + chunk.content
 
-        embeddings = embedder.embed([c.content for c in chunks])
-        vector_store.add_chunks(chunks, embeddings, source=filename)
+        embeddings = _embedder.embed([c.content for c in chunks])
+        _vector_store.add_chunks(chunks, embeddings, source=filename)
+        _bm25_indexer.add_chunks(chunks)
 
-        if bm25_indexer:
-            bm25_indexer.add_chunks(chunks)
-
-        # Update status in a new session
+        # Update status
         session = next(get_db())
         doc = session.query(Document).filter(Document.id == doc_id).first()
         if doc:
             doc.status = "ready"
             session.commit()
         session.close()
+        print(f"[DocsUpload] Ingestion completed for {filename}")
 
     except Exception as e:
         print(f"[DocsUpload] Ingestion failed for {filename}: {e}")
-        session = next(get_db())
-        doc = session.query(Document).filter(Document.id == doc_id).first()
-        if doc:
-            doc.status = "failed"
-            session.commit()
-        session.close()
+        try:
+            session = next(get_db())
+            doc = session.query(Document).filter(Document.id == doc_id).first()
+            if doc:
+                doc.status = "failed"
+                session.commit()
+            session.close()
+        except Exception:
+            pass
 
 
 @router.get("")
@@ -134,13 +135,12 @@ async def delete_document(doc_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Delete physical file
     for f in UPLOAD_DIR.glob(f"{doc_id}_*"):
         f.unlink()
 
-    # Delete from ChromaDB
-    vector_store = VectorStore(persist_directory="./vector_db")
-    vector_store.delete_by_doc_id(doc_id)
+    _vector_store = vector_store
+    if _vector_store:
+        _vector_store.delete_by_doc_id(doc_id)
 
     db.delete(doc)
     db.commit()

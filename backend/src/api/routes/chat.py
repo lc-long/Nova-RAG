@@ -5,7 +5,8 @@ from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 
-from ..server import llm_client, retriever, Message
+from ..components import llm_client, retriever
+from ...core.llm.minimax import Message
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -23,11 +24,11 @@ class ChatRequest(BaseModel):
 
 @router.post("/completions")
 async def chat_completions(request: ChatRequest):
-    """SSE streaming chat - mirrors Go's ChatHandler.Completions proxy to Python /process_query."""
+    """SSE streaming chat - mirrors Go's ChatHandler.Completions."""
     if not llm_client or not retriever:
         raise HTTPException(status_code=500, detail="Service not initialized")
 
-    messages = [Message(**m.model_dump()) for m in request.messages]
+    messages = [Message(role=m.role, content=m.content) for m in request.messages]
     last_query = messages[-1].content if messages else ""
 
     context_chunks = retriever.retrieve(last_query, top_k=5, doc_id=request.doc_id)
