@@ -297,7 +297,7 @@ class VectorStore:
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
                 name=self.collection_name,
-                metadata={"description": "Lumina Insight document chunks"}
+                metadata={"description": "Nova-RAG document chunks"}
             )
         return self._collection
 
@@ -555,7 +555,7 @@ class MinimaxClient:
 - [ ] **Step 2: 更新 FastAPI 服务**
 
 ```python
-"""FastAPI server for Lumina Insight AI Service."""
+"""FastAPI server for Nova-RAG AI Service."""
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -569,7 +569,7 @@ from ..core.storage.vector_store import VectorStore
 from ..core.llm.minimax import MinimaxClient, Message
 
 
-app = FastAPI(title="Lumina Insight AI Service")
+app = FastAPI(title="Nova-RAG AI Service")
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,4 +1,4 @@
-# Lumina Insight
+# Nova-RAG
 
 > 企业级 RAG 知识库问答系统 — V1.0 MVP
 
@@ -51,9 +51,11 @@ PYTHON_PORT=5000
 
 ### 2. 启动 Python AI 引擎
 
+只要安装了 `uv`，无需手动创建虚拟环境。在 `python` 目录下直接执行以下命令，`uv` 会自动拉取依赖并启动服务：
+
 ```bash
 cd python
-.venv\Scripts\uvicorn.exe src.api.server:app --host 0.0.0.0 --port 5000
+uv run uvicorn src.api.server:app --host 0.0.0.0 --port 5000
 ```
 
 ### 3. 启动 Go 后端网关

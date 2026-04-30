@@ -218,7 +218,7 @@ export default function ChatArea({ currentDoc }: { currentDoc: string | null }) 
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <Bot className="w-16 h-16 text-indigo-300 mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-gray-700 mb-2">Lumina Insight 智能助手</h2>
+            <h2 className="text-xl font-semibold text-gray-700 mb-2">Nova-RAG 智能助手</h2>
             <p className="text-gray-500">请从左侧选择一个文档开始对话，或直接上传新文档</p>
           </div>
         </div>

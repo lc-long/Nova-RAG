@@ -89,7 +89,7 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
       <div className="p-4 border-b border-gray-200">
         <div className="flex items-center gap-2 mb-4">
           <BookOpen className="w-6 h-6 text-indigo-600" />
-          <span className="font-semibold text-gray-900">Lumina Insight</span>
+          <span className="font-semibold text-gray-900">Nova-RAG</span>
         </div>
 
         <label className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg cursor-pointer transition-colors">

@@ -1,4 +1,4 @@
-"""FastAPI server for Lumina Insight AI Service."""
+"""FastAPI server for Nova-RAG AI Service."""
 import os
 import json
 import uuid
@@ -27,7 +27,7 @@ from ..core.retriever.bm25_index import BM25Indexer
 from ..core.storage.vector_store import VectorStore
 from ..core.llm.minimax import MinimaxClient, Message
 
-app = FastAPI(title="Lumina Insight AI Service")
+app = FastAPI(title="Nova-RAG AI Service")
 
 app.add_middleware(
     CORSMiddleware,
@@ -57,14 +57,14 @@ class QueryRequest(BaseModel):
 @app.on_event("startup")
 async def startup():
     global vector_store, embedder, retriever, chunker, llm_client, bm25_indexer
-    print("[Lumina Insight] Initializing components...")
+    print("[Nova-RAG] Initializing components...")
     vector_store = VectorStore(persist_directory="./vector_db")
     embedder = SentenceTransformerEmbedder()
     bm25_indexer = BM25Indexer(persist_directory="./vector_db")
     retriever = HybridRetriever(vector_store, embedder, bm25_indexer)
     chunker = ParentChildChunker()
     llm_client = MinimaxClient()
-    print("[Lumina Insight] All components ready!")
+    print("[Nova-RAG] All components ready!")
 
 
 @app.post("/process_query")
@@ -311,5 +311,5 @@ async def delete_chunks_by_doc(doc_id: str):
 
 
 if __name__ == "__main__":
-    print("[Lumina Insight] Starting server on http://0.0.0.0:5000")
+    print("[Nova-RAG] Starting server on http://0.0.0.0:5000")
     uvicorn.run(app, host="0.0.0.0", port=5000)

@@ -35,7 +35,7 @@ class VectorStore:
         if self._collection is None:
             self._collection = self.client.get_or_create_collection(
                 name=self.collection_name,
-                metadata={"description": "Lumina Insight document chunks"}
+                metadata={"description": "Nova-RAG document chunks"}
             )
         return self._collection
 
