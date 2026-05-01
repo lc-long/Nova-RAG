@@ -439,6 +439,11 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
                 i === prev.length - 1 ? { ...m, content: m.content + parsed.content } : m
               ))
             }
+            if (parsed.type === 'error') {
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, content: m.content + '\n\n⚠️ ' + parsed.content } : m
+              ))
+            }
             if (parsed.done) {
               if (parsed.references) {
                 setMessages(prev => prev.map((m, i) =>

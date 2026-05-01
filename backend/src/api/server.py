@@ -39,6 +39,12 @@ async def startup():
     app.state.components = create_components()
 
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring and load balancers."""
+    return {"status": "ok", "service": "Nova-RAG"}
+
+
 app.include_router(docs.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
