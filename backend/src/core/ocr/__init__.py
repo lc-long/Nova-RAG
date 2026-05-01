@@ -1,14 +1,51 @@
 """OCR module for image text extraction using vision models.
 
 Supports multiple vision models with fallback:
-1. MiniMax-VL-01 (primary - user has more tokens)
-2. Qwen-VL-Plus (fallback)
+1. Qwen-VL-Plus (primary - via DashScope)
 """
 import os
+import hashlib
+import json
 import base64
 import requests
+from pathlib import Path
 from typing import Optional
 from abc import ABC, abstractmethod
+
+# Cache directory for OCR results (avoid re-calling API for same file)
+_OCR_CACHE_DIR = Path(__file__).parent.parent.parent.parent / "ocr_cache"
+_OCR_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _get_file_hash(file_path: str) -> str:
+    """Compute MD5 hash of file content for cache key."""
+    h = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _load_ocr_cache(file_hash: str) -> Optional[list[dict]]:
+    """Load cached OCR results if they exist."""
+    cache_file = _OCR_CACHE_DIR / f"{file_hash}.json"
+    if cache_file.exists():
+        try:
+            with open(cache_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
+
+
+def _save_ocr_cache(file_hash: str, results: list[dict]) -> None:
+    """Save OCR results to cache."""
+    cache_file = _OCR_CACHE_DIR / f"{file_hash}.json"
+    try:
+        with open(cache_file, "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[OCR] Cache save failed: {e}")
 
 
 class VisionModel(ABC):
@@ -239,9 +276,10 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
     """Extract and process images from PDF with intelligent OCR strategy.
 
     Strategy:
-    1. Try extracting embedded images first
-    2. If no embedded images, do page screenshots for pages with little text
-    3. Limit OCR pages to control API costs
+    1. Check cache first (based on file hash)
+    2. Try extracting embedded images first
+    3. If no embedded images, do page screenshots for pages with little text
+    4. Limit OCR pages to control API costs
 
     Args:
         file_path: Path to PDF file
@@ -250,6 +288,13 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
     Returns:
         List of dicts with image descriptions
     """
+    # Check cache first
+    file_hash = _get_file_hash(file_path)
+    cached = _load_ocr_cache(file_hash)
+    if cached is not None:
+        print(f"[OCR] Cache hit for {file_path} ({len(cached)} results)")
+        return cached
+
     from .pdf_parser import extract_images_from_pdf, get_page_screenshots
     import pdfplumber
 
@@ -262,7 +307,9 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
 
         if images:
             print(f"[OCR] Found {len(images)} embedded images in PDF")
-            return _process_image_list(images)
+            results = _process_image_list(images)
+            _save_ocr_cache(file_hash, results)
+            return results
 
         # Step 2: No embedded images - use page screenshots for image-heavy pages
         print("[OCR] No embedded images found, analyzing pages for OCR candidates...")
@@ -283,6 +330,7 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
         if not pages_to_ocr:
             # If all pages have substantial text, no need for OCR
             print("[OCR] All pages have sufficient text, skipping page screenshots")
+            _save_ocr_cache(file_hash, [])
             return []
 
         print(f"[OCR] Selected {len(pages_to_ocr)} pages for screenshot OCR: {pages_to_ocr}")
@@ -291,7 +339,9 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
         all_screenshots = get_page_screenshots(file_path, temp_dir)
         selected_screenshots = [s for s in all_screenshots if s["page_num"] in pages_to_ocr]
 
-        return _process_image_list(selected_screenshots)
+        results = _process_image_list(selected_screenshots)
+        _save_ocr_cache(file_hash, results)
+        return results
 
     finally:
         # Cleanup temp directory

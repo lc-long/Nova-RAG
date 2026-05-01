@@ -292,6 +292,55 @@ def extract_text_from_pdf(file_path: str) -> str:
     return "\n\n".join(parts)
 
 
+# Sentinel used to mark page boundaries (stripped before chunking)
+_PAGE_MARKER = "\x00PAGE_SEP\x00"
+
+
+def extract_text_from_pdf_with_pages(file_path: str) -> tuple[str, list[int]]:
+    """Extract PDF text with page boundary markers for OCR insertion.
+
+    Returns:
+        (text_with_markers, page_offsets) where page_offsets[i] = char offset
+        of the start of page (i+1) in the text.
+    """
+    pages = []
+    for text, page_num, _ in parse_pdf(file_path):
+        cleaned = _clean_pdf_text(text)
+        pages.append((page_num, cleaned))
+    return pages
+
+
+def merge_ocr_into_text(pages: list[tuple[int, str]], ocr_results: list[dict]) -> str:
+    """Merge OCR image descriptions into their corresponding page text.
+
+    Args:
+        pages: List of (page_number, page_text) from extract_text_from_pdf_with_pages
+        ocr_results: List of dicts with page_num, description from OCR
+
+    Returns:
+        Full text with OCR descriptions inserted at the correct page positions
+    """
+    # Build a dict of page_num -> list of descriptions
+    ocr_by_page: dict[int, list[str]] = {}
+    for img in ocr_results:
+        page_num = img.get("page_num", 0)
+        desc = img.get("description", "")
+        if desc:
+            ocr_by_page.setdefault(page_num, []).append(desc)
+
+    # Merge
+    parts = []
+    for page_num, page_text in pages:
+        if page_text.strip():
+            parts.append(page_text)
+        # Insert any OCR descriptions for this page
+        if page_num in ocr_by_page:
+            for desc in ocr_by_page[page_num]:
+                parts.append(f"[Page {page_num} Image]: {desc}")
+
+    return "\n\n".join(parts)
+
+
 def _clean_pdf_text(text: str) -> str:
     """Remove common PDF extraction artifacts."""
     # Collapse 3+ consecutive newlines to double newline
