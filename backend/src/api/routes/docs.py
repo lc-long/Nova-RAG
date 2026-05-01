@@ -1,14 +1,13 @@
-"""Document management routes -接管 Go 的 docs handler."""
+"""Document management routes."""
 import uuid
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks, Request
 from sqlalchemy.orm import Session
 
 from ..database import get_db
 from ..models import Document
-from ..components import vector_store, embedder, bm25_indexer, chunker
 
 router = APIRouter(prefix="/docs", tags=["documents"])
 
@@ -18,6 +17,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 @router.post("/upload")
 async def upload_document(
+    request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     background_tasks: BackgroundTasks = None
@@ -41,7 +41,7 @@ async def upload_document(
     db.add(doc)
     db.commit()
 
-    background_tasks.add_task(run_ingestion, doc_id, file.filename, str(saved_path))
+    background_tasks.add_task(run_ingestion, request.app.state.components, doc_id, file.filename, str(saved_path))
 
     return {
         "id": doc_id,
@@ -51,22 +51,13 @@ async def upload_document(
     }
 
 
-def run_ingestion(doc_id: str, filename: str, file_path: str):
-    """Background ingestion task - mirrors Go's ingestToPython."""
+def run_ingestion(components, doc_id: str, filename: str, file_path: str):
+    """Background ingestion task."""
     from ...core.chunker.pdf_parser import extract_text_from_pdf
     from ...core.chunker.docx_parser import extract_text_from_docx
     from ...core.chunker.excel_parser import extract_text_from_excel
     from ...core.chunker.csv_parser import extract_text_from_csv
     from ...core.chunker.ppt_parser import extract_text_from_pptx
-
-    _vector_store = vector_store
-    _embedder = embedder
-    _bm25_indexer = bm25_indexer
-    _chunker = chunker
-
-    if not all([_vector_store, _embedder, _bm25_indexer, _chunker]):
-        print(f"[DocsUpload] Components not initialized, skipping ingestion for {filename}")
-        return
 
     try:
         if filename.endswith(".pdf"):
@@ -87,17 +78,17 @@ def run_ingestion(doc_id: str, filename: str, file_path: str):
             return
 
         if filename.endswith(".md"):
-            chunks = _chunker.chunk_markdown(text, doc_id)
+            chunks = components.chunker.chunk_markdown(text, doc_id)
         else:
-            chunks = _chunker.chunk(text, doc_id)
+            chunks = components.chunker.chunk(text, doc_id)
 
         prefix = f"[来源文件：{filename}]\n"
         for chunk in chunks:
             chunk.content = prefix + chunk.content
 
-        embeddings = _embedder.embed([c.content for c in chunks])
-        _vector_store.add_chunks(chunks, embeddings, source=filename)
-        _bm25_indexer.add_chunks(chunks)
+        embeddings = components.embedder.embed([c.content for c in chunks])
+        components.vector_store.add_chunks(chunks, embeddings, source=filename)
+        components.bm25_indexer.add_chunks(chunks)
 
         # Update status
         session = next(get_db())
@@ -129,20 +120,21 @@ async def list_documents(db: Session = Depends(get_db)):
 
 
 @router.delete("/{doc_id}")
-async def delete_document(doc_id: str, db: Session = Depends(get_db)):
+async def delete_document(request: Request, doc_id: str, db: Session = Depends(get_db)):
     """Delete document - mirrors Go's DocsHandler.Delete."""
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
-        raise HTTPException(status_code=404, detail="Document not found")
+        print(f"[DeleteDoc] Warning: Document {doc_id} not found in SQLite, cleaning up ChromaDB anyway")
+    else:
+        db.delete(doc)
+        db.commit()
 
     for f in UPLOAD_DIR.glob(f"{doc_id}_*"):
         f.unlink()
 
-    _vector_store = vector_store
-    if _vector_store:
-        _vector_store.delete_by_doc_id(doc_id)
-
-    db.delete(doc)
-    db.commit()
+    try:
+        request.app.state.components.vector_store.delete_by_doc_id(doc_id)
+    except Exception as e:
+        print(f"[DeleteDoc] Warning: ChromaDB cleanup failed for {doc_id}: {e}")
 
     return {"status": "ok"}

@@ -1,4 +1,5 @@
 """Global shared components initialized at startup."""
+from dataclasses import dataclass
 from typing import Optional
 
 from ..core.storage.vector_store import VectorStore
@@ -8,17 +9,19 @@ from ..core.retriever.bm25_index import BM25Indexer
 from ..core.chunker.parent_child import ParentChildChunker
 from ..core.llm.minimax import MinimaxClient
 
-vector_store: Optional[VectorStore] = None
-embedder: Optional[SentenceTransformerEmbedder] = None
-bm25_indexer: Optional[BM25Indexer] = None
-retriever: Optional[HybridRetriever] = None
-chunker: Optional[ParentChildChunker] = None
-llm_client: Optional[MinimaxClient] = None
+
+@dataclass
+class Components:
+    vector_store: VectorStore
+    embedder: SentenceTransformerEmbedder
+    bm25_indexer: BM25Indexer
+    retriever: HybridRetriever
+    chunker: ParentChildChunker
+    llm_client: MinimaxClient
 
 
-def init_components():
-    """Initialize all shared components. Called once at startup."""
-    global vector_store, embedder, retriever, chunker, llm_client, bm25_indexer
+def create_components() -> Components:
+    """Initialize and return all shared components. Called once at startup."""
     print("[Nova-RAG] Initializing components...")
     vector_store = VectorStore(persist_directory="./vector_db")
     embedder = SentenceTransformerEmbedder()
@@ -27,3 +30,11 @@ def init_components():
     chunker = ParentChildChunker()
     llm_client = MinimaxClient()
     print("[Nova-RAG] All components ready!")
+    return Components(
+        vector_store=vector_store,
+        embedder=embedder,
+        bm25_indexer=bm25_indexer,
+        retriever=retriever,
+        chunker=chunker,
+        llm_client=llm_client,
+    )

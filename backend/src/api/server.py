@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
-from .components import init_components
+from .components import create_components
 from .database import Base, engine
 from .routes import docs, chat
 
@@ -34,7 +34,7 @@ app.add_middleware(
 @app.on_event("startup")
 async def startup():
     Base.metadata.create_all(bind=engine)
-    init_components()
+    app.state.components = create_components()
 
 
 app.include_router(docs.router, prefix="/api/v1")
