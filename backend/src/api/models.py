@@ -5,7 +5,7 @@ from .database import Base
 
 
 class Document(Base):
-    """Document metadata stored in SQLite."""
+    """Document metadata stored in PostgreSQL."""
     __tablename__ = "documents"
 
     id = Column(String, primary_key=True)

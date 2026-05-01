@@ -18,6 +18,7 @@ import uvicorn
 
 from .components import create_components
 from .database import Base, engine
+from ..core.storage.vector_store import init_pgvector
 from .routes import docs, chat
 
 app = FastAPI(title="Nova-RAG Unified Backend")
@@ -33,6 +34,7 @@ app.add_middleware(
 
 @app.on_event("startup")
 async def startup():
+    init_pgvector()
     Base.metadata.create_all(bind=engine)
     app.state.components = create_components()
 

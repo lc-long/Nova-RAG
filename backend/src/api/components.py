@@ -22,7 +22,7 @@ class Components:
 def create_components() -> Components:
     """Initialize and return all shared components. Called once at startup."""
     print("[Nova-RAG] Initializing components...")
-    vector_store = VectorStore(persist_directory="./vector_db")
+    vector_store = VectorStore()
     embedder = AliyunEmbedder()
     bm25_indexer = BM25Indexer(persist_directory="./vector_db")
     retriever = HybridRetriever(vector_store, embedder, bm25_indexer)

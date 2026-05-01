@@ -124,7 +124,7 @@ async def delete_document(request: Request, doc_id: str, db: Session = Depends(g
     """Delete document - mirrors Go's DocsHandler.Delete."""
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
-        print(f"[DeleteDoc] Warning: Document {doc_id} not found in SQLite, cleaning up ChromaDB anyway")
+        print(f"[DeleteDoc] Warning: Document {doc_id} not found in DB, cleaning up vectors anyway")
     else:
         db.delete(doc)
         db.commit()
@@ -135,6 +135,6 @@ async def delete_document(request: Request, doc_id: str, db: Session = Depends(g
     try:
         request.app.state.components.vector_store.delete_by_doc_id(doc_id)
     except Exception as e:
-        print(f"[DeleteDoc] Warning: ChromaDB cleanup failed for {doc_id}: {e}")
+        print(f"[DeleteDoc] Warning: Vector cleanup failed for {doc_id}: {e}")
 
     return {"status": "ok"}
