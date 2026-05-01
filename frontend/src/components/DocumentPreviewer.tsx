@@ -47,19 +47,23 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   const [error, setError] = useState<string | null>(null)
   const [docxHtml, setDocxHtml] = useState<string | null>(null)
 
-  const [pdfPages, setPdfPages] = useState<string[]>([])
+  const [pdfDoc, setPdfDoc] = useState<any>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
-  const [scale, setScale] = useState(1.2)
+  const [scale, setScale] = useState(2)
+  const [rendering, setRendering] = useState(false)
 
-  const containerRef = useRef<HTMLDivElement>(null)
+  const canvasRef = useRef<HTMLCanvasElement>(null)
+  const pdfDocRef = useRef<any>(null)
+  const renderingTaskRef = useRef<any>(null)
 
   useEffect(() => {
     setLoading(true)
     setError(null)
     setData(null)
     setDocxHtml(null)
-    setPdfPages([])
+    setPdfDoc(null)
+    pdfDocRef.current = null
     setCurrentPage(1)
     setTotalPages(0)
 
@@ -112,34 +116,15 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
 
         if (cancelled) return
 
-        const pages: string[] = []
-        for (let i = 1; i <= doc.numPages; i++) {
-          const page = await doc.getPage(i)
-          const viewport = page.getViewport({ scale: 1.5 })
-          const canvas = document.createElement('canvas')
-          const ctx = canvas.getContext('2d')
-          if (!ctx) continue
-
-          canvas.width = viewport.width
-          canvas.height = viewport.height
-
-          await page.render({
-            canvasContext: ctx,
-            viewport: viewport,
-          } as any).promise
-
-          pages.push(canvas.toDataURL('image/png'))
-        }
-
-        if (!cancelled) {
-          setPdfPages(pages)
-          setTotalPages(pages.length)
-          setCurrentPage(1)
-        }
+        pdfDocRef.current = doc
+        setPdfDoc(doc)
+        setTotalPages(doc.numPages)
+        setCurrentPage(1)
       } catch (err) {
         if (!cancelled) {
           console.error('PDF loading failed:', err)
-          setPdfPages([])
+          setPdfDoc(null)
+          pdfDocRef.current = null
         }
       }
     }
@@ -150,6 +135,49 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
       cancelled = true
     }
   }, [data?.name, docId])
+
+  const renderPage = useCallback(async (pageNum: number) => {
+    const doc = pdfDocRef.current
+    if (!doc || !canvasRef.current) return
+
+    if (renderingTaskRef.current) {
+      renderingTaskRef.current.cancel()
+      renderingTaskRef.current = null
+    }
+
+    setRendering(true)
+    try {
+      const page = await doc.getPage(pageNum)
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+
+      const viewport = page.getViewport({ scale })
+      canvas.width = viewport.width
+      canvas.height = viewport.height
+
+      const renderTask = page.render({
+        canvasContext: ctx,
+        viewport: viewport,
+      } as any)
+
+      renderingTaskRef.current = renderTask
+      await renderTask.promise
+      renderingTaskRef.current = null
+    } catch (err: any) {
+      if (err?.name !== 'RenderingCancelledException') {
+        console.error('Page rendering failed:', err)
+      }
+    } finally {
+      setRendering(false)
+    }
+  }, [scale])
+
+  useEffect(() => {
+    if (pdfDoc && currentPage > 0) {
+      renderPage(currentPage)
+    }
+  }, [pdfDoc, currentPage, renderPage])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
@@ -170,11 +198,11 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   }, [currentPage, totalPages])
 
   const handleZoomIn = useCallback(() => {
-    setScale(prev => Math.min(prev + 0.2, 3))
+    setScale(prev => Math.min(prev + 0.5, 4))
   }, [])
 
   const handleZoomOut = useCallback(() => {
-    setScale(prev => Math.max(prev - 0.2, 0.5))
+    setScale(prev => Math.max(prev - 0.5, 0.5))
   }, [])
 
   const handleDownload = useCallback(async (e: React.MouseEvent) => {
@@ -249,7 +277,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
         </div>
       </div>
 
-      <div className="flex-1 overflow-hidden" ref={containerRef}>
+      <div className="flex-1 overflow-hidden">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-full text-gray-400">
             <Loader2 className="w-8 h-8 animate-spin mb-3" />
@@ -298,20 +326,16 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
                 <ZoomIn className="w-4 h-4" />
               </button>
             </div>
-            <div className="flex-1 overflow-auto bg-gray-100 flex justify-center p-4">
-              {pdfPages.length > 0 && currentPage > 0 && currentPage <= pdfPages.length ? (
-                <img
-                  src={pdfPages[currentPage - 1]}
-                  alt={`Page ${currentPage}`}
-                  className="shadow-lg bg-white max-w-full"
-                  style={{ transform: `scale(${scale})`, transformOrigin: 'top center' }}
-                />
-              ) : (
-                <div className="flex flex-col items-center justify-center h-full text-gray-400">
-                  <Loader2 className="w-8 h-8 animate-spin mb-3" />
-                  <span className="text-sm">正在渲染 PDF...</span>
+            <div className="flex-1 overflow-auto bg-gray-100 flex justify-center p-4 relative">
+              {rendering && (
+                <div className="absolute inset-0 flex items-center justify-center bg-white/50 z-10 pointer-events-none">
+                  <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
                 </div>
               )}
+              <canvas
+                ref={canvasRef}
+                className="shadow-lg bg-white"
+              />
             </div>
           </div>
         ) : isDocx ? (
