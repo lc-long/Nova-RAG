@@ -38,51 +38,67 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
       .finally(() => setLoading(false))
   }, [docId])
 
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [onClose])
+
+  const statusLabel = data?.status === 'ready' ? '已就绪'
+    : data?.status === 'processing' ? '处理中'
+    : data?.status === 'failed' ? '失败' : null
+
+  const statusColor = data?.status === 'ready' ? 'bg-green-50 text-green-600 ring-green-500/20'
+    : data?.status === 'processing' ? 'bg-yellow-50 text-yellow-600 ring-yellow-500/20'
+    : 'bg-red-50 text-red-600 ring-red-500/20'
+
   return (
-    <div className="w-1/2 min-w-0 border-l border-gray-200 bg-white flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-gray-50 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <FileText className="w-4 h-4 text-indigo-500 shrink-0" />
-          <h3 className="text-sm font-semibold text-gray-800 truncate">
+    <div className="h-full flex flex-col bg-white border-l border-gray-200 shadow-2xl">
+      {/* Sticky header with backdrop blur */}
+      <div className="sticky top-0 z-10 flex items-center justify-between px-5 py-3.5
+                      border-b border-gray-200 bg-gray-50/80 backdrop-blur-sm shrink-0">
+        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+          <div className="p-1.5 bg-indigo-50 rounded-lg shrink-0">
+            <FileText className="w-4 h-4 text-indigo-500" />
+          </div>
+          <h3 className="text-sm font-semibold text-gray-800 truncate max-w-[280px]">
             {data?.name || '文档预览'}
           </h3>
-          {data?.status && (
-            <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-              data.status === 'ready' ? 'bg-green-100 text-green-700'
-              : data.status === 'processing' ? 'bg-yellow-100 text-yellow-700'
-              : 'bg-red-100 text-red-700'
-            }`}>
-              {data.status === 'ready' ? '已就绪' : data.status === 'processing' ? '处理中' : '失败'}
+          {statusLabel && (
+            <span className={`shrink-0 text-[10px] px-1.5 py-0.5 rounded-full font-medium ring-1 ${statusColor}`}>
+              {statusLabel}
             </span>
           )}
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 hover:bg-gray-200 rounded-lg transition-colors"
-          title="关闭预览"
+          className="shrink-0 p-2 hover:bg-gray-200 rounded-full transition-colors"
+          title="关闭预览 (Esc)"
         >
           <X className="w-4 h-4 text-gray-500" />
         </button>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto p-6">
+      {/* Scrollable body */}
+      <div className="flex-1 overflow-y-auto">
         {loading ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+          <div className="flex flex-col items-center justify-center h-full text-gray-400">
             <Loader2 className="w-8 h-8 animate-spin mb-3" />
             <span className="text-sm">正在加载文档内容...</span>
           </div>
         ) : error ? (
-          <div className="flex flex-col items-center justify-center py-20 text-red-400">
+          <div className="flex flex-col items-center justify-center h-full text-red-400">
             <span className="text-sm">加载失败：{error}</span>
           </div>
         ) : data?.content ? (
-          <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
+          <div className="p-6 md:p-8">
+            <div className="prose prose-sm md:prose-base max-w-none text-gray-700
+                            leading-relaxed whitespace-pre-wrap break-words">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
+            </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+          <div className="flex flex-col items-center justify-center h-full text-gray-400">
             <span className="text-sm">文档内容为空</span>
           </div>
         )}

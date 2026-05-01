@@ -55,7 +55,7 @@ function App() {
           },
         }}
       />
-      <div className="flex h-screen bg-gray-50">
+      <div className="flex h-screen bg-gray-50 relative">
         <Sidebar
           currentDoc={currentDoc}
           onSelectDoc={setCurrentDoc}
@@ -72,7 +72,9 @@ function App() {
           onPreview={handlePreview}
         />
         {previewDocId && (
-          <DocumentPreviewer docId={previewDocId} onClose={handleClosePreview} />
+          <div className="absolute top-0 right-0 h-full w-[45%] min-w-[360px] max-w-[640px] z-30">
+            <DocumentPreviewer docId={previewDocId} onClose={handleClosePreview} />
+          </div>
         )}
       </div>
     </>
