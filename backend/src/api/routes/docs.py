@@ -214,6 +214,7 @@ async def get_document_file(doc_id: str, db: Session = Depends(get_db)):
         path=str(file_path),
         media_type=media_type,
         filename=doc.name,
+        content_disposition_type="inline",
     )
 
 
