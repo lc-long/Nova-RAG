@@ -12,7 +12,7 @@ from .aliyun_reranker import AliyunReranker
 
 # Scale-up constants: initial recall pool before RRF fusion
 _RECALL_MULTIPLIER = 6   # top_k * 6 → initial召回量
-_OUTPUT_TOP_K = 20        # RRF融合后输出量（扩大到20，给大模型更宽的上下文视野）
+_OUTPUT_TOP_K = 10        # RRF融合后输出量（减少到10，加快reranker速度）
 _RRF_K = 60              # RRF constant
 _MISSING_RANK = 1000     # Large rank assigned to chunks appearing in only one channel
 
