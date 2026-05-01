@@ -187,14 +187,12 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/{doc_id}/file")
-async def get_document_file(doc_id: str, db: Session = Depends(get_db)):
-    """Serve the original file for inline preview."""
+def _resolve_file(doc_id: str, db: Session):
+    """Shared helper: validate doc exists and return (doc, file_path, media_type)."""
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    # Find the physical file on disk
     matches = list(UPLOAD_DIR.glob(f"{doc_id}_*"))
     if not matches:
         raise HTTPException(status_code=404, detail="File not found on disk")
@@ -209,12 +207,32 @@ async def get_document_file(doc_id: str, db: Session = Depends(get_db)):
         ".csv": "text/csv; charset=utf-8",
     }
     media_type = media_types.get(suffix, "application/octet-stream")
+    return doc, file_path, media_type
 
+
+@router.get("/{doc_id}/preview")
+async def preview_document(doc_id: str, db: Session = Depends(get_db)):
+    """Serve the original file for inline preview (never triggers download)."""
+    doc, file_path, media_type = _resolve_file(doc_id, db)
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
         headers={
             "Content-Disposition": f'inline; filename="{doc.name}"',
+            "Content-Type": media_type,
+        },
+    )
+
+
+@router.get("/{doc_id}/download")
+async def download_document(doc_id: str, db: Session = Depends(get_db)):
+    """Serve the original file as an attachment download."""
+    doc, file_path, media_type = _resolve_file(doc_id, db)
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{doc.name}"',
             "Content-Type": media_type,
         },
     )

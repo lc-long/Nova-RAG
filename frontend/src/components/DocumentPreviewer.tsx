@@ -85,7 +85,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
         <div className="flex items-center gap-1 shrink-0">
           {data && (
             <a
-              href={`${API_BASE}/docs/${docId}/file`}
+              href={`${API_BASE}/docs/${docId}/download`}
               target="_blank"
               rel="noopener noreferrer"
               download
@@ -119,14 +119,14 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
         ) : isPdf ? (
           /* Native PDF rendering via object tag with cache-busting URL */
           <object
-            data={`${API_BASE}/docs/${docId}/file?t=${Date.now()}`}
+            data={`${API_BASE}/docs/${docId}/preview?t=${Date.now()}`}
             type="application/pdf"
             className="w-full h-full min-h-[80vh] border-0"
           >
             <div className="flex flex-col items-center justify-center h-full text-gray-400 p-4">
               <p className="text-sm mb-2">无法直接预览此 PDF</p>
               <a
-                href={`${API_BASE}/docs/${docId}/file`}
+                href={`${API_BASE}/docs/${docId}/download`}
                 download
                 className="text-indigo-600 underline text-sm hover:text-indigo-800"
               >
@@ -152,7 +152,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
                 该格式暂不支持在线预览
               </p>
               <a
-                href={`${API_BASE}/docs/${docId}/file`}
+                href={`${API_BASE}/docs/${docId}/download`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 text-white
