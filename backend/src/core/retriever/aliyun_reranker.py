@@ -10,7 +10,7 @@ class AliyunReranker:
     def __init__(self, api_key: Optional[str] = None, model: str = "gte-rerank"):
         self.api_key = api_key or os.getenv("ALIYUN_API_KEY", "")
         self.model = model
-        self.api_url = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-reranking/text-reranking"
+        self.api_url = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
 
     def rerank(self, query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
         """Rerank candidates by semantic relevance using DashScope API.
