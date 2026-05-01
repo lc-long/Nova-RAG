@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks, Request
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import cast, Integer
@@ -184,6 +185,36 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
         "status": doc.status,
         "content": full_text.strip(),
     }
+
+
+@router.get("/{doc_id}/file")
+async def get_document_file(doc_id: str, db: Session = Depends(get_db)):
+    """Serve the original file for inline preview."""
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    # Find the physical file on disk
+    matches = list(UPLOAD_DIR.glob(f"{doc_id}_*"))
+    if not matches:
+        raise HTTPException(status_code=404, detail="File not found on disk")
+
+    file_path = matches[0]
+    suffix = file_path.suffix.lower()
+
+    media_types = {
+        ".pdf": "application/pdf",
+        ".txt": "text/plain; charset=utf-8",
+        ".md": "text/plain; charset=utf-8",
+        ".csv": "text/csv; charset=utf-8",
+    }
+    media_type = media_types.get(suffix, "application/octet-stream")
+
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type,
+        filename=doc.name,
+    )
 
 
 @router.delete("/{doc_id}")
