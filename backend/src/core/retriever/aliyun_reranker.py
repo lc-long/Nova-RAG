@@ -1,7 +1,7 @@
 """Aliyun DashScope reranker implementation."""
 import os
 from typing import Optional
-import requests
+import httpx
 
 
 class AliyunReranker:
@@ -37,11 +37,10 @@ class AliyunReranker:
                     "documents": documents,
                 },
                 "parameters": {
-                    "top_n": min(top_k, len(documents)),
                     "return_documents": False,
                 },
             }
-            resp = requests.post(self.api_url, json=payload, headers=headers, timeout=10)
+            resp = httpx.post(self.api_url, json=payload, headers=headers, timeout=10)
             resp.raise_for_status()
             data = resp.json()
 
