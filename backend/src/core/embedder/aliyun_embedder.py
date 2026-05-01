@@ -1,7 +1,11 @@
 """Aliyun DashScope embedding implementation using OpenAI-compatible API."""
 import os
+import time
 from typing import Optional
 from .base import Embedder
+
+_BATCH_SIZE = 6   # DashScope limit is 10; use 6 for safety margin
+_BATCH_SLEEP = 0.1  # seconds between batches to avoid QPS throttling
 
 
 class AliyunEmbedder(Embedder):
@@ -25,8 +29,14 @@ class AliyunEmbedder(Embedder):
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        response = self.client.embeddings.create(
-            model=self.model,
-            input=texts,
-        )
-        return [item.embedding for item in response.data]
+        all_embeddings: list[list[float]] = []
+        for i in range(0, len(texts), _BATCH_SIZE):
+            if i > 0:
+                time.sleep(_BATCH_SLEEP)
+            batch = texts[i:i + _BATCH_SIZE]
+            response = self.client.embeddings.create(
+                model=self.model,
+                input=batch,
+            )
+            all_embeddings.extend(item.embedding for item in response.data)
+        return all_embeddings
