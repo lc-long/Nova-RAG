@@ -140,9 +140,15 @@ class QwenVL(VisionModel):
                 output = data.get("output", {})
                 choices = output.get("choices", [])
                 if choices:
-                    return choices[0].get("message", {}).get("content", "")
+                    message = choices[0].get("message", {})
+                    content = message.get("content", [])
+                    # Content is a list of dicts: [{"text": "..."}]
+                    if isinstance(content, list) and content:
+                        return content[0].get("text", "")
+                    elif isinstance(content, str):
+                        return content
             
-            print(f"[Qwen-VL] API error: {response.status_code}")
+            print(f"[Qwen-VL] API error: {response.status_code} - {response.text[:200]}")
             return ""
             
         except Exception as e:
@@ -151,20 +157,22 @@ class QwenVL(VisionModel):
 
 
 class OCRProcessor:
-    """OCR processor with multi-model fallback."""
-    
+    """OCR processor with vision models.
+
+    Uses Qwen-VL (DashScope) for image understanding.
+    MiniMax image understanding is via MCP tools, not direct API.
+    """
+
     def __init__(self):
         self.models = []
-        
-        # Initialize models in priority order
-        minimax_key = os.getenv("MINIMAX_API_KEY", "")
-        minimax_group = os.getenv("MINIMAX_GROUP_ID", "")
-        if minimax_key and minimax_group:
-            self.models.append(("MiniMax-VL", MiniMaxVL(minimax_key, minimax_group)))
-        
+
+        # Qwen-VL via DashScope (primary)
         qwen_key = os.getenv("ALIYUN_API_KEY", "")
         if qwen_key:
             self.models.append(("Qwen-VL", QwenVL(qwen_key)))
+
+        if not self.models:
+            print("[OCR] Warning: No vision model configured. Set ALIYUN_API_KEY.")
     
     def process_image(self, image_base64: str, prompt: str = None) -> str:
         """Process image with fallback models.
