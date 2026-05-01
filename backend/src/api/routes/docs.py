@@ -3,6 +3,7 @@ import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import List
+from urllib.parse import quote
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks, Request
 from fastapi.responses import FileResponse
@@ -217,11 +218,12 @@ def _resolve_file(doc_id: str, db: Session):
 async def preview_document(doc_id: str, db: Session = Depends(get_db)):
     """Serve the original file for inline preview (never triggers download)."""
     doc, file_path, media_type = _resolve_file(doc_id, db)
+    encoded_name = quote(doc.name)
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
         headers={
-            "Content-Disposition": f'inline; filename="{doc.name}"',
+            "Content-Disposition": f"inline; filename*=UTF-8''{encoded_name}",
             "Content-Type": media_type,
         },
     )
@@ -231,11 +233,12 @@ async def preview_document(doc_id: str, db: Session = Depends(get_db)):
 async def download_document(doc_id: str, db: Session = Depends(get_db)):
     """Serve the original file as an attachment download."""
     doc, file_path, media_type = _resolve_file(doc_id, db)
+    encoded_name = quote(doc.name)
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{doc.name}"',
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_name}",
             "Content-Type": media_type,
         },
     )
