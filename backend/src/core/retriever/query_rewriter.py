@@ -5,8 +5,12 @@ doesn't match document phrasing (e.g., "限高 30 m").
 """
 import os
 from typing import Optional
+from functools import lru_cache
 
 os.environ["HF_ENDPOINT"] = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
+
+# Short query threshold - skip LLM for queries shorter than this
+SHORT_QUERY_THRESHOLD = 10
 
 
 class QueryRewriter:
@@ -21,6 +25,7 @@ class QueryRewriter:
     def __init__(self, llm_client=None):
         self.llm_client = llm_client
         self._client = None
+        self._cache = {}
 
     @property
     def client(self):
@@ -33,6 +38,8 @@ class QueryRewriter:
     def rewrite(self, user_query: str) -> list[str]:
         """Rewrite a single user query into multiple search variants.
 
+        Skips LLM for short queries to improve response time.
+
         Args:
             user_query: Original user query string.
 
@@ -41,6 +48,17 @@ class QueryRewriter:
         """
         if not user_query or not user_query.strip():
             return [user_query]
+
+        # Check cache first
+        cache_key = user_query.strip().lower()
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        # Skip LLM for short queries - use pattern expansion only
+        if len(user_query) < SHORT_QUERY_THRESHOLD:
+            result = self._pattern_expand(user_query)
+            self._cache[cache_key] = result
+            return result
 
         prompt = f"{self.SYSTEM_PROMPT}\n\n用户查询：{user_query}"
 
@@ -63,23 +81,31 @@ class QueryRewriter:
                 f"{self.client.base_url}/text/chatcompletion_v2",
                 headers=headers,
                 json=payload,
-                timeout=15
+                timeout=10  # Reduced from 15s
             )
 
             if response.status_code != 200:
-                return [user_query]
+                result = [user_query]
+                self._cache[cache_key] = result
+                return result
 
             data = response.json()
             choices = data.get("choices", [])
             if not choices:
-                return [user_query]
+                result = [user_query]
+                self._cache[cache_key] = result
+                return result
 
             content = choices[0].get("message", {}).get("content", "")
             rewrites = self._parse_rewrites(content)
-            return rewrites if rewrites else [user_query]
+            result = rewrites if rewrites else [user_query]
+            self._cache[cache_key] = result
+            return result
 
         except Exception:
-            return [user_query]
+            result = [user_query]
+            self._cache[cache_key] = result
+            return result
 
     def _parse_rewrites(self, content: str) -> list[str]:
         """Parse LLM response into a list of query strings."""
