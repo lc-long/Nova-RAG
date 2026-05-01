@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import mammoth from 'mammoth'
 import { X, Loader2, FileText, Download } from 'lucide-react'
 import { API_BASE_URL } from '../config'
 
@@ -18,9 +19,6 @@ interface Props {
   onClose: () => void
 }
 
-const PREVIEWABLE_EXTENSIONS = new Set(['.pdf'])
-const TEXT_EXTENSIONS = new Set(['.md', '.txt', '.csv'])
-
 function getFileExtension(name: string): string {
   const dot = name.lastIndexOf('.')
   return dot >= 0 ? name.slice(dot).toLowerCase() : ''
@@ -30,11 +28,13 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   const [data, setData] = useState<PreviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [docxHtml, setDocxHtml] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
     setError(null)
     setData(null)
+    setDocxHtml(null)
 
     fetch(`${API_BASE}/docs/${docId}/content`)
       .then(res => {
@@ -46,6 +46,28 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
       .finally(() => setLoading(false))
   }, [docId])
 
+  // DOCX: fetch file blob and convert to HTML via mammoth
+  useEffect(() => {
+    const ext = data?.name ? getFileExtension(data.name) : ''
+    if (ext !== '.docx' || !docId) return
+
+    let cancelled = false
+    fetch(`${API_BASE}/docs/${docId}/download`)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.arrayBuffer()
+      })
+      .then(arrayBuffer => mammoth.convertToHtml({ arrayBuffer }))
+      .then(result => {
+        if (!cancelled) setDocxHtml(result.value)
+      })
+      .catch(() => {
+        if (!cancelled) setDocxHtml(null)
+      })
+
+    return () => { cancelled = true }
+  }, [data?.name, docId])
+
   useEffect(() => {
     const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose() }
     window.addEventListener('keydown', handler)
@@ -53,8 +75,11 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   }, [onClose])
 
   const ext = data?.name ? getFileExtension(data.name) : ''
-  const isPdf = PREVIEWABLE_EXTENSIONS.has(ext)
-  const isText = TEXT_EXTENSIONS.has(ext)
+  const isPdf = ext === '.pdf'
+  const isDocx = ext === '.docx'
+  const isMd = ext === '.md'
+  const isTxt = ext === '.txt'
+  const isCsv = ext === '.csv'
 
   const statusLabel = data?.status === 'ready' ? '已就绪'
     : data?.status === 'processing' ? '处理中'
@@ -117,33 +142,39 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
             <span className="text-sm">加载失败：{error}</span>
           </div>
         ) : isPdf ? (
-          /* Native PDF rendering via object tag with cache-busting URL */
-          <object
-            data={`${API_BASE}/docs/${docId}/preview?t=${Date.now()}`}
-            type="application/pdf"
-            className="w-full h-full min-h-[80vh] border-0"
-          >
-            <div className="flex flex-col items-center justify-center h-full text-gray-400 p-4">
-              <p className="text-sm mb-2">无法直接预览此 PDF</p>
-              <a
-                href={`${API_BASE}/docs/${docId}/download`}
-                download
-                className="text-indigo-600 underline text-sm hover:text-indigo-800"
-              >
-                点击下载原文件
-              </a>
+          <iframe
+            src={`${API_BASE}/docs/${docId}/preview?t=${Date.now()}`}
+            className="w-full h-full border-0"
+            title={data?.name}
+          />
+        ) : isDocx ? (
+          docxHtml ? (
+            <div className="h-full overflow-y-auto p-8">
+              <div
+                className="prose prose-sm md:prose-base max-w-none text-gray-700 leading-relaxed"
+                dangerouslySetInnerHTML={{ __html: docxHtml }}
+              />
             </div>
-          </object>
-        ) : isText && data?.content ? (
-          /* Markdown / text rendering */
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+              <Loader2 className="w-8 h-8 animate-spin mb-3" />
+              <span className="text-sm">正在解析 Word 文档...</span>
+            </div>
+          )
+        ) : isMd && data?.content ? (
           <div className="h-full overflow-y-auto p-6 md:p-8">
             <div className="prose prose-sm md:prose-base max-w-none text-gray-700
                             leading-relaxed whitespace-pre-wrap break-words">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
             </div>
           </div>
+        ) : (isTxt || isCsv) && data?.content ? (
+          <div className="h-full overflow-y-auto p-6 md:p-8">
+            <pre className="whitespace-pre-wrap break-words font-mono text-sm text-gray-700 leading-relaxed">
+              {data.content}
+            </pre>
+          </div>
         ) : (
-          /* Unsupported format — download card */
           <div className="flex flex-col items-center justify-center h-full text-gray-400 px-8">
             <div className="p-4 bg-gray-50 rounded-2xl border border-gray-200 text-center max-w-xs">
               <FileText className="w-10 h-10 text-gray-300 mx-auto mb-3" />
