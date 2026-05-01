@@ -50,7 +50,8 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   const [pdfDoc, setPdfDoc] = useState<any>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
-  const [scale, setScale] = useState(2)
+  const RENDER_SCALE = 2
+  const [zoom, setZoom] = useState(100)
   const [rendering, setRendering] = useState(false)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -152,7 +153,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
       const ctx = canvas.getContext('2d')
       if (!ctx) return
 
-      const viewport = page.getViewport({ scale })
+      const viewport = page.getViewport({ scale: RENDER_SCALE })
       canvas.width = viewport.width
       canvas.height = viewport.height
 
@@ -171,7 +172,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
     } finally {
       setRendering(false)
     }
-  }, [scale])
+  }, [])
 
   useEffect(() => {
     if (pdfDoc && currentPage > 0) {
@@ -198,11 +199,11 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   }, [currentPage, totalPages])
 
   const handleZoomIn = useCallback(() => {
-    setScale(prev => Math.min(prev + 0.5, 4))
+    setZoom(prev => Math.min(prev + 20, 300))
   }, [])
 
   const handleZoomOut = useCallback(() => {
-    setScale(prev => Math.max(prev - 0.5, 0.5))
+    setZoom(prev => Math.max(prev - 20, 50))
   }, [])
 
   const handleDownload = useCallback(async (e: React.MouseEvent) => {
@@ -316,7 +317,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
                 <ZoomOut className="w-4 h-4" />
               </button>
               <span className="text-sm text-gray-600 min-w-[50px] text-center">
-                {Math.round(scale * 100)}%
+                {zoom}%
               </span>
               <button
                 onClick={handleZoomIn}
@@ -335,6 +336,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
               <canvas
                 ref={canvasRef}
                 className="shadow-lg bg-white"
+                style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
               />
             </div>
           </div>
