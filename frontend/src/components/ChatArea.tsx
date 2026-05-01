@@ -19,6 +19,7 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   reasoning: string
+  thoughts: string[]
   references?: Reference[]
 }
 
@@ -117,6 +118,37 @@ function renderWithCitations(text: string, onCite: (index: number) => void): Rea
   })
 }
 
+/* ── Thought panel (DeepSeek style) ── */
+function ThoughtPanel({ thoughts, isStreaming }: { thoughts: string[]; isStreaming: boolean }) {
+  const [open, setOpen] = useState(false)
+
+  if (thoughts.length === 0) return null
+
+  return (
+    <details className="mb-2" open={isStreaming}>
+      <summary
+        onClick={(e) => { e.preventDefault(); setOpen(o => !o) }}
+        className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-gray-400
+                   hover:bg-gray-100 rounded-lg text-xs font-medium transition-colors"
+      >
+        {open || isStreaming ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+        <span>🧠</span>
+        <span>检索与推理过程</span>
+        {isStreaming && <span className="ml-1 w-1.5 h-1.5 bg-blue-500 rounded-full animate-pulse" />}
+      </summary>
+      <div className="mt-1 px-3 py-2 text-xs text-gray-500 bg-gray-50 rounded-lg border border-gray-100 space-y-1">
+        {thoughts.map((t, i) => (
+          <div key={i} className="flex items-start gap-1.5">
+            <span className="shrink-0 mt-0.5">{t.startsWith('✅') ? '' : t.startsWith('⚠️') ? '' : '·'}</span>
+            <span>{t}</span>
+          </div>
+        ))}
+        {isStreaming && <span className="inline-block w-2 h-3 bg-gray-400 animate-pulse rounded-sm" />}
+      </div>
+    </details>
+  )
+}
+
 /* ── Message bubble ── */
 function MessageBubble({ msg, onCite }: { msg: Message; onCite: (index: number) => void }) {
   const [thinkingOpen, setThinkingOpen] = useState(false)
@@ -132,9 +164,11 @@ function MessageBubble({ msg, onCite }: { msg: Message; onCite: (index: number) 
   }
 
   const isStreaming = msg.reasoning && !msg.content
+  const isThinking = msg.thoughts.length > 0 && !msg.content
 
   return (
     <div className="space-y-2 max-w-xl">
+      <ThoughtPanel thoughts={msg.thoughts} isStreaming={isThinking} />
       {msg.reasoning && (
         <details className="bg-gray-50 border border-gray-200 rounded-lg" open={false}>
           <summary className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none text-gray-500 hover:bg-gray-100 text-sm font-medium"
@@ -218,6 +252,7 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
             role: m.role,
             content: m.content,
             reasoning: m.reasoning || '',
+            thoughts: [],
             references: m.sources || [],
           }))
           setMessages(msgs)
@@ -304,13 +339,13 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
     if (!input.trim() || streaming || requestInFlight.current) return
 
     requestInFlight.current = true
-    const userMessage: Message = { id: Date.now().toString(), role: 'user', content: input, reasoning: '' }
+    const userMessage: Message = { id: Date.now().toString(), role: 'user', content: input, reasoning: '', thoughts: [] }
     setMessages(prev => [...prev, userMessage])
     setInput('')
     setShowMention(false)
     setStreaming(true)
 
-    const assistantMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '', reasoning: '' }
+    const assistantMessage: Message = { id: (Date.now() + 1).toString(), role: 'assistant', content: '', reasoning: '', thoughts: [] }
     setMessages(prev => [...prev, assistantMessage])
 
     // Determine effective doc_ids
@@ -352,6 +387,11 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
           if (data === '[DONE]') continue
           try {
             const parsed = JSON.parse(data)
+            if (parsed.type === 'thought') {
+              setMessages(prev => prev.map((m, i) =>
+                i === prev.length - 1 ? { ...m, thoughts: [...m.thoughts, parsed.content] } : m
+              ))
+            }
             if (parsed.type === 'reasoning') {
               setMessages(prev => prev.map((m, i) =>
                 i === prev.length - 1 ? { ...m, reasoning: m.reasoning + parsed.content } : m

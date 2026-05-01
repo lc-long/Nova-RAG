@@ -88,8 +88,23 @@ async def chat_completions(request: Request, body: ChatRequest):
     def generate():
         full_answer = ""
         full_reasoning = ""
+        full_thought = ""
         references = []
 
+        # --- Thought: retrieval phase ---
+        doc_scope = "全局" if not effective_doc_ids else f"{len(effective_doc_ids)} 个指定文档"
+        thought1 = f"🔍 正在进行语义向量检索（范围：{doc_scope}）..."
+        full_thought += thought1 + "\n"
+        yield f"data: {json.dumps({'type': 'thought', 'content': thought1})}\n\n"
+
+        if context_chunks:
+            thought2 = f"✅ 成功召回并重排 {len(context_chunks)} 个文档片段，开始生成回答..."
+        else:
+            thought2 = "⚠️ 未找到相关文档片段，将基于通用知识回答..."
+        full_thought += thought2 + "\n"
+        yield f"data: {json.dumps({'type': 'thought', 'content': thought2})}\n\n"
+
+        # --- LLM streaming ---
         for chunk in components.llm_client.stream_chat(messages, context_chunks):
             if chunk.chunk_type == "done":
                 references = chunk.references or []
@@ -108,7 +123,6 @@ async def chat_completions(request: Request, body: ChatRequest):
                 )
                 db.add(assistant_msg)
 
-                # Update conversation timestamp and title if first exchange
                 conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
                 if conv:
                     conv.updated_at = datetime.utcnow()

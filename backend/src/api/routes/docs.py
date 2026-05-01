@@ -2,8 +2,10 @@
 import uuid
 from datetime import datetime
 from pathlib import Path
+from typing import List
 
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks, Request
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -117,6 +119,29 @@ async def list_documents(db: Session = Depends(get_db)):
     """List all documents - mirrors Go's DocsHandler.List."""
     docs = db.query(Document).order_by(Document.created_at.desc()).all()
     return [doc.to_dict() for doc in docs]
+
+
+class BatchDeleteRequest(BaseModel):
+    doc_ids: List[str]
+
+
+@router.post("/batch-delete")
+async def batch_delete_documents(request: Request, body: BatchDeleteRequest, db: Session = Depends(get_db)):
+    """Delete multiple documents and their vectors in one transaction."""
+    deleted = 0
+    for doc_id in body.doc_ids:
+        doc = db.query(Document).filter(Document.id == doc_id).first()
+        if doc:
+            db.delete(doc)
+        for f in UPLOAD_DIR.glob(f"{doc_id}_*"):
+            f.unlink()
+        try:
+            request.app.state.components.vector_store.delete_by_doc_id(doc_id)
+        except Exception as e:
+            print(f"[BatchDelete] Vector cleanup failed for {doc_id}: {e}")
+        deleted += 1
+    db.commit()
+    return {"status": "ok", "deleted": deleted}
 
 
 @router.delete("/{doc_id}")
