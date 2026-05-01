@@ -30,25 +30,26 @@ def test_rag_quality(doc_id: Optional[str] = None):
         {
             "category": "精确信息提取",
             "questions": [
-                "什么是 Pod？",
-                "Kubernetes 中 Service 的作用是什么？",
-                "ConfigMap 和 Secret 的区别是什么？",
+                "星辰科技是什么时候成立的？",
+                "公司注册资本是多少？",
+                "公司有多少员工？",
             ],
         },
         # 场景2: 表格数据理解
         {
             "category": "表格数据理解",
             "questions": [
-                "kubectl get pods 的常用参数有哪些？",
-                "Kubernetes 支持哪些 Volume 类型？",
+                "公司有哪些核心产品？",
+                "智能客服Pro的用户数是多少？",
+                "技术栈中前端用了什么？",
             ],
         },
         # 场景3: 否定问题（应该回答"未找到"）
         {
             "category": "否定问题",
             "questions": [
-                "Kubernetes 的创始人是谁？",
-                "Kubernetes 2.0 有什么新特性？",
+                "公司的竞争对手有哪些？",
+                "公司的年营收是多少？",
             ],
         },
         # 场景4: 多轮对话
@@ -56,9 +57,9 @@ def test_rag_quality(doc_id: Optional[str] = None):
             "category": "多轮对话",
             "conversations": [
                 [
-                    "什么是 Deployment？",
-                    "它和 StatefulSet 有什么区别？",
-                    "什么场景下应该用 StatefulSet？",
+                    "公司有几个部门？",
+                    "研发部有多少人？",
+                    "研发部的总监是谁？",
                 ]
             ],
         },
@@ -123,7 +124,7 @@ def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
 
     payload = {
         "messages": [{"role": "user", "content": question}],
-        "stream": False,
+        "stream": True,
     }
     if doc_id:
         payload["doc_ids"] = [doc_id]
@@ -133,7 +134,8 @@ def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
         response = requests.post(
             f"{API_BASE}/chat/completions",
             json=payload,
-            timeout=30,
+            stream=True,
+            timeout=60,
         )
         elapsed = time.time() - start_time
 
@@ -149,16 +151,21 @@ def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
         # 解析 SSE 响应
         answer = ""
         references = []
-        for line in response.text.split("\n"):
-            if line.startswith("data: "):
-                try:
-                    data = json.loads(line[6:])
-                    if data.get("type") == "answer":
-                        answer += data.get("content", "")
-                    if data.get("done"):
-                        references = data.get("references", [])
-                except json.JSONDecodeError:
-                    pass
+        for line in response.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue
+            try:
+                data = json.loads(line[6:])
+                if data.get("type") == "answer":
+                    answer += data.get("content", "")
+                if data.get("type") == "reasoning":
+                    pass  # Skip reasoning for now
+                if data.get("done"):
+                    references = data.get("references", [])
+            except json.JSONDecodeError:
+                pass
+
+        elapsed = time.time() - start_time
 
         # 评估结果
         retrieved = len(references) > 0
@@ -200,7 +207,7 @@ def test_multi_turn(questions: list, doc_id: Optional[str] = None) -> dict:
 
         payload = {
             "messages": messages[-5:],  # 最近 5 轮
-            "stream": False,
+            "stream": True,
         }
         if doc_id:
             payload["doc_ids"] = [doc_id]
@@ -209,19 +216,21 @@ def test_multi_turn(questions: list, doc_id: Optional[str] = None) -> dict:
             response = requests.post(
                 f"{API_BASE}/chat/completions",
                 json=payload,
-                timeout=30,
+                stream=True,
+                timeout=60,
             )
 
             if response.status_code == 200:
                 answer = ""
-                for line in response.text.split("\n"):
-                    if line.startswith("data: "):
-                        try:
-                            data = json.loads(line[6:])
-                            if data.get("type") == "answer":
-                                answer += data.get("content", "")
-                        except json.JSONDecodeError:
-                            pass
+                for line in response.iter_lines(decode_unicode=True):
+                    if not line or not line.startswith("data: "):
+                        continue
+                    try:
+                        data = json.loads(line[6:])
+                        if data.get("type") == "answer":
+                            answer += data.get("content", "")
+                    except json.JSONDecodeError:
+                        pass
 
                 messages.append({"role": "assistant", "content": answer})
                 print(f"  💬 回答: {answer[:150]}...")
