@@ -80,6 +80,9 @@ def test_question(question: str) -> dict:
         
         elapsed = time.time() - start
         
+        # Remove problematic unicode characters for Windows console
+        safe_answer = answer.encode('gbk', errors='replace').decode('gbk')
+        
         # Evaluate quality
         has_answer = len(answer) > 20
         has_refs = len(references) > 0
@@ -95,7 +98,7 @@ def test_question(question: str) -> dict:
             quality = "poor"
         
         print(f"  Time: {elapsed:.1f}s | Refs: {len(references)} | Quality: {quality}")
-        print(f"  Answer: {answer[:150]}...")
+        print(f"  Answer: {safe_answer[:150]}...")
         
         return {
             "question": question,
