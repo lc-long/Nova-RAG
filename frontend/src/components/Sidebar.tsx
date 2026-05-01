@@ -35,7 +35,7 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
       const response = await axios.get(`${API_BASE}/docs`, { timeout: 5000 })
       setDocs(response.data)
     } catch (error) {
-      toast.error('网络错误：无法连接到 Go 后端服务器')
+      toast.error('网络错误：无法连接到后端服务器')
     } finally {
       setLoading(false)
     }
@@ -54,36 +54,50 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
   }
 
   const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const fileList = e.target.files
+    if (!fileList || fileList.length === 0) return
 
+    const files = Array.from(fileList)
     setUploading(true)
 
-    const formData = new FormData()
-    formData.append('file', file)
+    const results = await Promise.allSettled(
+      files.map(async (file) => {
+        const formData = new FormData()
+        formData.append('file', file)
 
-    try {
-      const response = await axios.post(`${API_BASE}/docs/upload`, formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data',
-        },
-        timeout: 30000,
+        const response = await axios.post(`${API_BASE}/docs/upload`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 60000,
+        })
+
+        const newDoc: Document = {
+          id: response.data.doc_id || Date.now().toString(),
+          name: file.name,
+          size: `${(file.size / 1024).toFixed(0)}KB`,
+          date: new Date().toISOString().split('T')[0],
+        }
+        return newDoc
       })
+    )
 
-      const newDoc: Document = {
-        id: response.data.doc_id || Date.now().toString(),
-        name: file.name,
-        size: `${(file.size / 1024).toFixed(0)}KB`,
-        date: new Date().toISOString().split('T')[0],
-      }
-      setDocs(prev => [newDoc, ...prev])
-      toast.success('文档上传成功')
-    } catch (error: any) {
-      toast.error(error.response?.data?.error || '上传失败，请重试')
-    } finally {
-      setUploading(false)
-      e.target.value = ''
+    const succeeded: Document[] = []
+    const failed: string[] = []
+    results.forEach((r, i) => {
+      if (r.status === 'fulfilled') succeeded.push(r.value)
+      else failed.push(files[i].name)
+    })
+
+    if (succeeded.length > 0) {
+      setDocs(prev => [...succeeded, ...prev])
+      toast.success(`成功上传 ${succeeded.length} 个文档`)
     }
+    if (failed.length > 0) {
+      toast.error(`以下文件上传失败：${failed.join(', ')}`)
+    }
+
+    setUploading(false)
+    e.target.value = ''
+    fetchDocs()
   }
 
   return (
@@ -109,6 +123,7 @@ export default function Sidebar({ currentDoc, onSelectDoc }: SidebarProps) {
           <input
             type="file"
             accept=".pdf,.docx,.xlsx,.csv,.md,.pptx,.txt"
+            multiple
             className="hidden"
             onChange={handleUpload}
             disabled={uploading}
