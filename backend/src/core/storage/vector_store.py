@@ -9,7 +9,7 @@ class VectorStore:
     def __init__(
         self,
         persist_directory: str = "./vector_db",
-        collection_name: str = "lumina_docs"
+        collection_name: str = "nova_docs_1024"
     ):
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
