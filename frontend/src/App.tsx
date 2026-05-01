@@ -3,6 +3,7 @@ import { Toaster } from 'react-hot-toast'
 import axios from 'axios'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
+import DocumentPreviewer from './components/DocumentPreviewer'
 import { API_BASE_URL } from './config'
 
 const API_BASE = API_BASE_URL
@@ -14,6 +15,7 @@ interface DocItem {
 
 function App() {
   const [currentDoc, setCurrentDoc] = useState<string | null>(null)
+  const [previewDocId, setPreviewDocId] = useState<string | null>(null)
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [docs, setDocs] = useState<DocItem[]>([])
   const [refreshTrigger, setRefreshTrigger] = useState(0)
@@ -30,6 +32,14 @@ function App() {
   const handleConversationChange = useCallback((id: string | null) => {
     setConversationId(id)
     setRefreshTrigger(prev => prev + 1)
+  }, [])
+
+  const handlePreview = useCallback((docId: string) => {
+    setPreviewDocId(docId)
+  }, [])
+
+  const handleClosePreview = useCallback(() => {
+    setPreviewDocId(null)
   }, [])
 
   return (
@@ -52,13 +62,18 @@ function App() {
           currentConversation={conversationId}
           onSelectConversation={handleConversationChange}
           refreshTrigger={refreshTrigger}
+          onPreview={handlePreview}
         />
         <ChatArea
           currentDoc={currentDoc}
           conversationId={conversationId}
           onConversationChange={handleConversationChange}
           docs={docs}
+          onPreview={handlePreview}
         />
+        {previewDocId && (
+          <DocumentPreviewer docId={previewDocId} onClose={handleClosePreview} />
+        )}
       </div>
     </>
   )

@@ -3,7 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import toast from 'react-hot-toast'
 import axios from 'axios'
-import { Send, Bot, User, Loader2, ChevronDown, ChevronUp, Trash2, Globe, FileText, X, ExternalLink } from 'lucide-react'
+import { Send, Bot, User, Loader2, ChevronDown, ChevronUp, Trash2, Globe, FileText, X, ExternalLink, Download } from 'lucide-react'
 
 
 interface Reference {
@@ -33,6 +33,7 @@ interface ChatAreaProps {
   conversationId: string | null
   onConversationChange: (id: string | null) => void
   docs: DocItem[]
+  onPreview?: (docId: string) => void
 }
 
 /* ── Inline citation badge ── */
@@ -225,7 +226,7 @@ import { API_BASE_URL } from '../config'
 const API_BASE = API_BASE_URL
 const STORAGE_KEY = 'lumina_chat_history'
 
-export default function ChatArea({ currentDoc, conversationId, onConversationChange, docs }: ChatAreaProps) {
+export default function ChatArea({ currentDoc, conversationId, onConversationChange, docs, onPreview }: ChatAreaProps) {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
@@ -294,6 +295,33 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
     if (!msg.references) return
     const ref = msg.references.find(r => r.index === index)
     if (ref) setModalRef(ref)
+  }
+
+  const handleExportMarkdown = () => {
+    if (messages.length === 0) return
+    const lines: string[] = ['# Nova-RAG 会话导出\n']
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        lines.push(`### 🧑‍💻 用户提问\n\n${msg.content}\n\n`)
+      } else {
+        lines.push(`### 🤖 AI 回答\n\n${msg.content}\n\n`)
+        if (msg.references && msg.references.length > 0) {
+          lines.push('**参考来源**：\n')
+          for (const ref of msg.references) {
+            lines.push(`- [${ref.index}] ${ref.doc_id}\n`)
+          }
+          lines.push('\n')
+        }
+      }
+    }
+    const blob = new Blob(lines, { type: 'text/markdown;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    const ts = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    a.href = url
+    a.download = `Nova-RAG-会话导出-${ts}.md`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   // @ mention detection
@@ -456,6 +484,11 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
                   <FileText className="w-4 h-4" /> 当前文档
                 </button>
               </div>
+              <button onClick={handleExportMarkdown}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                title="导出为 Markdown">
+                <Download className="w-4 h-4" /> 导出
+              </button>
               <button onClick={handleClearSession}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
                 title="清空当前会话">
@@ -481,7 +514,7 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
                       </div>
                       <div className="flex gap-2 overflow-x-auto pb-1">
                         {msg.references.map(ref => (
-                          <SourceCard key={ref.index} ref_={ref} onClick={() => setModalRef(ref)} />
+                          <SourceCard key={ref.index} ref_={ref} onClick={() => { setModalRef(ref); onPreview?.(ref.doc_id) }} />
                         ))}
                       </div>
                     </div>

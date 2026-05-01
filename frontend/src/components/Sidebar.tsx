@@ -9,6 +9,7 @@ interface SidebarProps {
   currentConversation: string | null
   onSelectConversation: (id: string | null) => void
   refreshTrigger: number
+  onPreview?: (docId: string) => void
 }
 
 interface Document {
@@ -45,7 +46,7 @@ function StatusDot({ status }: { status?: string }) {
   return <span className={`w-2 h-2 rounded-full ${color} shrink-0`} title={title} />
 }
 
-export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, onSelectConversation, refreshTrigger }: SidebarProps) {
+export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, onSelectConversation, refreshTrigger, onPreview }: SidebarProps) {
   const [tab, setTab] = useState<TabType>('docs')
   const [docs, setDocs] = useState<Document[]>([])
   const [conversations, setConversations] = useState<Conversation[]>([])
@@ -264,7 +265,7 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
             ) : (
               <div className="space-y-1">
                 {docs.map(doc => (
-                  <div key={doc.id} onClick={() => onSelectDoc(doc.id)}
+                  <div key={doc.id} onClick={() => { onSelectDoc(doc.id); onPreview?.(doc.id) }}
                     className={`group flex items-center gap-2.5 p-2.5 rounded-lg cursor-pointer transition-all ${
                       currentDoc === doc.id ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-100'
                     }`}>

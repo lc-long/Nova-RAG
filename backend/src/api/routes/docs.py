@@ -7,9 +7,11 @@ from typing import List
 from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, BackgroundTasks, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import cast, Integer
 
 from ..database import get_db
 from ..models import Document
+from ...core.storage.vector_store import DocumentChunk
 
 router = APIRouter(prefix="/docs", tags=["documents"])
 
@@ -142,6 +144,46 @@ async def batch_delete_documents(request: Request, body: BatchDeleteRequest, db:
         deleted += 1
     db.commit()
     return {"status": "ok", "deleted": deleted}
+
+
+@router.get("/{doc_id}/content")
+async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
+    """Get full document content assembled from chunks."""
+    doc = db.query(Document).filter(Document.id == doc_id).first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    from ..database import SessionLocal
+    session = SessionLocal()
+    try:
+        chunks = session.query(DocumentChunk).filter(
+            DocumentChunk.doc_id == doc_id
+        ).all()
+
+        # Sort by order in metadata
+        def sort_key(c):
+            meta = c.metadata_ or {}
+            return meta.get("order", 0)
+        chunks.sort(key=sort_key)
+
+        # Strip source prefix from each chunk
+        full_text = ""
+        for c in chunks:
+            text = c.content
+            if text.startswith("[来源文件："):
+                idx = text.find("]\n")
+                if idx != -1:
+                    text = text[idx + 2:]
+            full_text += text + "\n\n"
+    finally:
+        session.close()
+
+    return {
+        "doc_id": doc_id,
+        "name": doc.name,
+        "status": doc.status,
+        "content": full_text.strip(),
+    }
 
 
 @router.delete("/{doc_id}")
