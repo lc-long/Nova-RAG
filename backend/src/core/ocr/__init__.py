@@ -228,54 +228,63 @@ def get_ocr_processor() -> OCRProcessor:
 
 
 def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
-    """Extract and process all images from PDF.
-    
+    """Extract and process images from PDF with intelligent OCR strategy.
+
+    Strategy:
+    1. Try extracting embedded images first
+    2. If no embedded images, do page screenshots for pages with little text
+    3. Limit OCR pages to control API costs
+
     Args:
         file_path: Path to PDF file
         doc_id: Document ID for naming
-        
+
     Returns:
         List of dicts with image descriptions
     """
-    from .pdf_parser import extract_images_from_pdf
-    
+    from .pdf_parser import extract_images_from_pdf, get_page_screenshots
+    import pdfplumber
+
     # Create temp directory for images
     temp_dir = os.path.join(os.path.dirname(file_path), f"temp_images_{doc_id}")
-    
+
     try:
-        # Extract images
+        # Step 1: Try extracting embedded images
         images = extract_images_from_pdf(file_path, temp_dir)
-        
-        if not images:
-            print(f"[OCR] No images found in {file_path}")
+
+        if images:
+            print(f"[OCR] Found {len(images)} embedded images in PDF")
+            return _process_image_list(images)
+
+        # Step 2: No embedded images - use page screenshots for image-heavy pages
+        print("[OCR] No embedded images found, analyzing pages for OCR candidates...")
+
+        # Find pages with little text (likely image/chart heavy)
+        pages_to_ocr = []
+        max_ocr_pages = 5  # Limit to control costs
+
+        with pdfplumber.open(file_path) as pdf:
+            for page_num, page in enumerate(pdf.pages, start=1):
+                text = page.extract_text() or ""
+                # If page has very little text, it's likely image/chart heavy
+                if len(text.strip()) < 100:
+                    pages_to_ocr.append(page_num)
+                    if len(pages_to_ocr) >= max_ocr_pages:
+                        break
+
+        if not pages_to_ocr:
+            # If all pages have substantial text, no need for OCR
+            print("[OCR] All pages have sufficient text, skipping page screenshots")
             return []
-        
-        print(f"[OCR] Found {len(images)} images in PDF")
-        
-        # Process each image
-        ocr = get_ocr_processor()
-        results = []
-        
-        for img_info in images:
-            image_base64 = img_info.get("image_base64", "")
-            if not image_base64:
-                continue
-            
-            # Get image description
-            description = ocr.process_image(image_base64)
-            
-            if description:
-                results.append({
-                    "page_num": img_info["page_num"],
-                    "image_idx": img_info.get("image_idx", 0),
-                    "description": description,
-                    "image_path": img_info.get("image_path"),
-                    "width": img_info.get("width", 0),
-                    "height": img_info.get("height", 0),
-                })
-        
-        return results
-        
+
+        print(f"[OCR] Selected {len(pages_to_ocr)} pages for screenshot OCR: {pages_to_ocr}")
+
+        # Step 3: Take screenshots of selected pages
+        all_screenshots = get_page_screenshots(file_path, temp_dir)
+        selected_screenshots = [s for s in all_screenshots if s["page_num"] in pages_to_ocr]
+
+        return _process_image_list(selected_screenshots)
+
     finally:
         # Cleanup temp directory
         try:
@@ -284,3 +293,36 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
                 shutil.rmtree(temp_dir)
         except Exception:
             pass
+
+
+def _process_image_list(images: list[dict]) -> list[dict]:
+    """Process a list of images with OCR.
+
+    Args:
+        images: List of image dicts with image_base64
+
+    Returns:
+        List of dicts with descriptions
+    """
+    ocr = get_ocr_processor()
+    results = []
+
+    for img_info in images:
+        image_base64 = img_info.get("image_base64", "")
+        if not image_base64:
+            continue
+
+        # Get image description
+        description = ocr.process_image(image_base64)
+
+        if description:
+            results.append({
+                "page_num": img_info.get("page_num", 0),
+                "image_idx": img_info.get("image_idx", 0),
+                "description": description,
+                "image_path": img_info.get("image_path"),
+                "width": img_info.get("width", 0),
+                "height": img_info.get("height", 0),
+            })
+
+    return results
