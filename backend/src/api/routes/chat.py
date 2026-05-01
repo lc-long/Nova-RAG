@@ -13,6 +13,56 @@ from ..models import Conversation, MessageModel
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
+# Token limits (approximate: 4 chars ≈ 1 token)
+MAX_CONTEXT_TOKENS = 4000
+MAX_HISTORY_TOKENS = 2000
+CHARS_PER_TOKEN = 4
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count (approximate)."""
+    return len(text) // CHARS_PER_TOKEN
+
+
+def truncate_messages(messages: List[Message], max_tokens: int) -> List[Message]:
+    """Keep most recent messages within token limit."""
+    if not messages:
+        return messages
+
+    total_tokens = 0
+    truncated = []
+    # Process from newest to oldest
+    for msg in reversed(messages):
+        msg_tokens = estimate_tokens(msg.content)
+        if total_tokens + msg_tokens > max_tokens:
+            break
+        truncated.insert(0, msg)
+        total_tokens += msg_tokens
+
+    # Always keep at least the last user message
+    if not truncated and messages:
+        truncated = [messages[-1]]
+
+    return truncated
+
+
+def truncate_context(chunks: list, max_tokens: int) -> list:
+    """Keep top chunks within token limit."""
+    if not chunks:
+        return chunks
+
+    total_tokens = 0
+    truncated = []
+    for chunk in chunks:
+        content = chunk.get("parent_content", "") or chunk.get("content", "")
+        chunk_tokens = estimate_tokens(content)
+        if total_tokens + chunk_tokens > max_tokens:
+            break
+        truncated.append(chunk)
+        total_tokens += chunk_tokens
+
+    return truncated
+
 
 class ChatMessage(BaseModel):
     role: str
@@ -37,8 +87,12 @@ async def chat_completions(request: Request, body: ChatRequest):
     # Resolve effective doc_ids: explicit list takes priority over single doc_id
     effective_doc_ids = body.doc_ids if body.doc_ids else ([body.doc_id] if body.doc_id else None)
 
-    messages = [Message(role=m.role, content=m.content) for m in body.messages]
-    last_query = messages[-1].content if messages else ""
+    # Build messages with history
+    all_messages = [Message(role=m.role, content=m.content) for m in body.messages]
+    last_query = all_messages[-1].content if all_messages else ""
+
+    # Truncate history to fit token limit
+    messages = truncate_messages(all_messages, MAX_HISTORY_TOKENS)
 
     # Retrieve context — pass doc_ids list for multi-doc scoping
     if effective_doc_ids and len(effective_doc_ids) == 1:
@@ -49,6 +103,9 @@ async def chat_completions(request: Request, body: ChatRequest):
         context_chunks = components.retriever.retrieve(last_query, top_k=5)
     if not context_chunks:
         context_chunks = []
+
+    # Truncate context to fit token limit
+    context_chunks = truncate_context(context_chunks, MAX_CONTEXT_TOKENS)
 
     # Ensure conversation exists
     conversation_id = body.conversation_id
