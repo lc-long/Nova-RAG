@@ -58,16 +58,32 @@ async def upload_document(
 
 
 def run_ingestion(components, doc_id: str, filename: str, file_path: str):
-    """Background ingestion task."""
+    """Background ingestion task with optional OCR for images."""
     from ...core.chunker.pdf_parser import extract_text_from_pdf
     from ...core.chunker.docx_parser import extract_text_from_docx
     from ...core.chunker.excel_parser import extract_text_from_excel
     from ...core.chunker.csv_parser import extract_text_from_csv
     from ...core.chunker.ppt_parser import extract_text_from_pptx
+    from ...core.ocr import process_pdf_images
 
     try:
         if filename.endswith(".pdf"):
             text = extract_text_from_pdf(file_path)
+            
+            # Process images with OCR
+            try:
+                image_results = process_pdf_images(file_path, doc_id)
+                if image_results:
+                    print(f"[DocsUpload] OCR: Found {len(image_results)} images with descriptions")
+                    # Append image descriptions to text
+                    for img in image_results:
+                        page_num = img.get("page_num", 0)
+                        description = img.get("description", "")
+                        if description:
+                            text += f"\n\n[Page {page_num} Image]: {description}"
+            except Exception as e:
+                print(f"[DocsUpload] OCR processing failed (non-fatal): {e}")
+                
         elif filename.endswith(".docx"):
             text = extract_text_from_docx(file_path)
         elif filename.endswith(".xlsx"):

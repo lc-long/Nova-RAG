@@ -1,12 +1,15 @@
-"""PDF document parser with table detection.
+"""PDF document parser with table detection and image extraction.
 
 Uses both PyMuPDF and pdfplumber for optimal table extraction.
-Falls back to pdfplumber if PyMuPDF fails.
+Extracts images from PDF for OCR processing.
 """
 import re
+import os
+import base64
 import pdfplumber
 import fitz  # PyMuPDF
 from typing import Generator
+from pathlib import Path
 
 
 def parse_pdf(file_path: str) -> Generator[tuple[str, int, str], None, None]:
@@ -50,6 +53,143 @@ def parse_pdf(file_path: str) -> Generator[tuple[str, int, str], None, None]:
             
             if full_text.strip():
                 yield full_text.strip(), page_num, full_text.strip()
+
+
+def extract_images_from_pdf(file_path: str, output_dir: str = None) -> list[dict]:
+    """Extract images from PDF for OCR processing.
+
+    Args:
+        file_path: Path to PDF file
+        output_dir: Directory to save extracted images (optional)
+
+    Returns:
+        List of dicts with image info: {page_num, image_path, image_base64, bbox}
+    """
+    images = []
+    
+    try:
+        doc = fitz.open(file_path)
+        
+        # Create output directory if specified
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        
+        for page_num, page in enumerate(doc, start=1):
+            image_list = page.get_images(full=True)
+            
+            for img_idx, img_info in enumerate(image_list):
+                xref = img_info[0]
+                
+                try:
+                    # Extract image
+                    base_image = doc.extract_image(xref)
+                    if not base_image:
+                        continue
+                    
+                    image_bytes = base_image["image"]
+                    image_ext = base_image.get("ext", "png")
+                    
+                    # Skip very small images (likely icons or decorations)
+                    width = base_image.get("width", 0)
+                    height = base_image.get("height", 0)
+                    if width < 50 or height < 50:
+                        continue
+                    
+                    # Convert to base64
+                    image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+                    
+                    # Save to file if output_dir specified
+                    image_path = None
+                    if output_dir:
+                        image_name = f"page{page_num}_img{img_idx}.{image_ext}"
+                        image_path = os.path.join(output_dir, image_name)
+                        with open(image_path, "wb") as f:
+                            f.write(image_bytes)
+                    
+                    # Get image position on page (approximate)
+                    bbox = None
+                    try:
+                        # Try to get image rect from page
+                        for block in page.get_text("dict")["blocks"]:
+                            if block.get("type") == 1:  # Image block
+                                bbox = block.get("bbox")
+                                break
+                    except Exception:
+                        pass
+                    
+                    images.append({
+                        "page_num": page_num,
+                        "image_idx": img_idx,
+                        "image_path": image_path,
+                        "image_base64": image_base64,
+                        "image_ext": image_ext,
+                        "width": width,
+                        "height": height,
+                        "bbox": bbox,
+                    })
+                    
+                except Exception as e:
+                    print(f"[PDF Parser] Failed to extract image {img_idx} from page {page_num}: {e}")
+                    continue
+        
+        doc.close()
+        
+    except Exception as e:
+        print(f"[PDF Parser] Image extraction failed: {e}")
+    
+    return images
+
+
+def get_page_screenshots(file_path: str, output_dir: str = None) -> list[dict]:
+    """Convert PDF pages to images (screenshots) for full-page OCR.
+
+    Useful when text extraction fails or for image-heavy pages.
+
+    Args:
+        file_path: Path to PDF file
+        output_dir: Directory to save screenshots
+
+    Returns:
+        List of dicts with page image info
+    """
+    screenshots = []
+    
+    try:
+        doc = fitz.open(file_path)
+        
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        
+        for page_num, page in enumerate(doc, start=1):
+            # Render page to image (2x resolution for better OCR)
+            mat = fitz.Matrix(2, 2)
+            pix = page.get_pixmap(matrix=mat)
+            
+            # Convert to bytes
+            image_bytes = pix.tobytes("png")
+            image_base64 = base64.b64encode(image_bytes).decode("utf-8")
+            
+            # Save if output_dir specified
+            image_path = None
+            if output_dir:
+                image_name = f"page{page_num}.png"
+                image_path = os.path.join(output_dir, image_name)
+                pix.save(image_path)
+            
+            screenshots.append({
+                "page_num": page_num,
+                "image_path": image_path,
+                "image_base64": image_base64,
+                "width": pix.width,
+                "height": pix.height,
+            })
+        
+        doc.close()
+        
+    except Exception as e:
+        print(f"[PDF Parser] Page screenshot failed: {e}")
+    
+    return screenshots
 
 
 def _table_to_markdown(table: list) -> str:
