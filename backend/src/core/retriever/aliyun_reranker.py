@@ -7,6 +7,9 @@ import httpx
 class AliyunReranker:
     """Reranker using Aliyun DashScope gte-rerank model."""
 
+    # Minimum relevance score threshold
+    MIN_RELEVANCE_SCORE = 0.3
+
     def __init__(self, api_key: Optional[str] = None, model: str = "gte-rerank"):
         self.api_key = api_key or os.getenv("ALIYUN_API_KEY", "")
         self.model = model
@@ -15,6 +18,7 @@ class AliyunReranker:
     def rerank(self, query: str, candidates: list[dict], top_k: int = 5) -> list[dict]:
         """Rerank candidates by semantic relevance using DashScope API.
 
+        Filters out low-relevance results below MIN_RELEVANCE_SCORE threshold.
         Falls back to original order on network error.
         """
         if not candidates:
@@ -49,10 +53,18 @@ class AliyunReranker:
             for item in results:
                 idx = item["index"]
                 score = item["relevance_score"]
+                
+                # Filter out low-relevance results
+                if score < self.MIN_RELEVANCE_SCORE:
+                    continue
+                
                 r_copy = dict(candidates[idx])
                 r_copy["rerank_score"] = score
                 reranked.append(r_copy)
 
+            # Sort by relevance score descending
+            reranked.sort(key=lambda x: x.get("rerank_score", 0), reverse=True)
+            
             return reranked[:top_k]
 
         except Exception as e:
