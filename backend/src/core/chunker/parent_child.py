@@ -292,8 +292,26 @@ class ParentChildChunker:
                     ]
                     accumulated = carry
                     acc_size = sum(len(l) + 1 for l in accumulated)
-                accumulated.append(unit)
-                acc_size += unit_size
+
+                # If a single unit exceeds parent_chunk_size, force-split it
+                if unit_size > self.parent_chunk_size:
+                    sub_chunks = self.text_splitter.split_text(unit)
+                    for sc in sub_chunks:
+                        max_len = max(max_len, len(sc))
+                        chunks.append(Chunk(
+                            chunk_id=f"{doc_id}_parent_{unit_count}",
+                            content=sc,
+                            doc_id=doc_id,
+                            chunk_type="parent",
+                            parent_id=None,
+                            order=unit_count
+                        ))
+                        unit_count += 1
+                    accumulated = []
+                    acc_size = 0
+                else:
+                    accumulated.append(unit)
+                    acc_size += unit_size
 
         if accumulated:
             content = "\n".join(accumulated).strip()
@@ -368,8 +386,30 @@ class ParentChildChunker:
                         ]
                         accumulated = carry
                         acc_size = sum(len(l) + 1 for l in accumulated)
-                    accumulated.append(line)
-                    acc_size += line_sz
+
+                    # If a single line exceeds child_chunk_size, force-split it
+                    if line_sz > self.child_chunk_size:
+                        child_splitter = RecursiveCharacterTextSplitter(
+                            chunk_size=self.child_chunk_size,
+                            chunk_overlap=self.overlap,
+                            separators=["\n\n", "\n", "。", "！", "？", ". ", " ", ""]
+                        )
+                        sub_chunks = child_splitter.split_text(line)
+                        for sc in sub_chunks:
+                            chunks.append(Chunk(
+                                chunk_id=f"{doc_id}_child_{parent.order}_{child_index}",
+                                content=sc,
+                                doc_id=doc_id,
+                                chunk_type="child",
+                                parent_id=parent.chunk_id,
+                                order=child_index
+                            ))
+                            child_index += 1
+                        accumulated = []
+                        acc_size = 0
+                    else:
+                        accumulated.append(line)
+                        acc_size += line_sz
                 if accumulated:
                     content = "\n".join(accumulated).strip()
                     if content:
