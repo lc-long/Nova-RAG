@@ -383,11 +383,20 @@ export default function ChatArea({ currentDoc, conversationId, onConversationCha
     }
 
     try {
+      // Build conversation history (last 10 messages for context)
+      const MAX_HISTORY = 10
+      const recentMessages = messages.slice(-MAX_HISTORY).map(m => ({
+        role: m.role,
+        content: m.content,
+      }))
+      // Add current user message
+      recentMessages.push({ role: 'user', content: input })
+
       const response = await fetch(`${API_BASE}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: [{ role: 'user', content: input }],
+          messages: recentMessages,
           stream: true,
           doc_id: null,
           doc_ids: effectiveDocIds,
