@@ -29,12 +29,14 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [docxHtml, setDocxHtml] = useState<string | null>(null)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
     setError(null)
     setData(null)
     setDocxHtml(null)
+    setPdfUrl(null)
 
     fetch(`${API_BASE}/docs/${docId}/content`)
       .then(res => {
@@ -66,6 +68,36 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
       })
 
     return () => { cancelled = true }
+  }, [data?.name, docId])
+
+  // PDF: fetch as blob, force application/pdf MIME, serve from memory URL
+  useEffect(() => {
+    const ext = data?.name ? getFileExtension(data.name) : ''
+    if (ext !== '.pdf' || !docId) return
+
+    let objectUrl: string | null = null
+    let cancelled = false
+
+    fetch(`${API_BASE}/docs/${docId}/preview`)
+      .then(res => {
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        return res.blob()
+      })
+      .then(blob => {
+        if (cancelled) return
+        // Force MIME type to break any browser sniffing that could trigger download
+        const pdfBlob = new Blob([blob], { type: 'application/pdf' })
+        objectUrl = URL.createObjectURL(pdfBlob)
+        setPdfUrl(objectUrl)
+      })
+      .catch(() => {
+        if (!cancelled) setPdfUrl(null)
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl) URL.revokeObjectURL(objectUrl)
+    }
   }, [data?.name, docId])
 
   useEffect(() => {
@@ -142,11 +174,18 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
             <span className="text-sm">加载失败：{error}</span>
           </div>
         ) : isPdf ? (
-          <iframe
-            src={`${API_BASE}/docs/${docId}/preview?t=${Date.now()}`}
-            className="w-full h-full border-0"
-            title={data?.name}
-          />
+          pdfUrl ? (
+            <iframe
+              src={pdfUrl}
+              className="w-full h-full border-0"
+              title={data?.name}
+            />
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full text-gray-400">
+              <Loader2 className="w-8 h-8 animate-spin mb-3" />
+              <span className="text-sm">正在加载 PDF...</span>
+            </div>
+          )
         ) : isDocx ? (
           docxHtml ? (
             <div className="h-full overflow-y-auto p-8">
