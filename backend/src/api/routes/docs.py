@@ -205,6 +205,9 @@ def _resolve_file(doc_id: str, db: Session):
         ".txt": "text/plain; charset=utf-8",
         ".md": "text/plain; charset=utf-8",
         ".csv": "text/csv; charset=utf-8",
+        ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     }
     media_type = media_types.get(suffix, "application/octet-stream")
     return doc, file_path, media_type
