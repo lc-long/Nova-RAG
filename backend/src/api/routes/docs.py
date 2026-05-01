@@ -213,8 +213,10 @@ async def get_document_file(doc_id: str, db: Session = Depends(get_db)):
     return FileResponse(
         path=str(file_path),
         media_type=media_type,
-        filename=doc.name,
-        content_disposition_type="inline",
+        headers={
+            "Content-Disposition": f'inline; filename="{doc.name}"',
+            "Content-Type": media_type,
+        },
     )
 
 

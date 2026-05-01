@@ -88,8 +88,9 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
               href={`${API_BASE}/docs/${docId}/file`}
               target="_blank"
               rel="noopener noreferrer"
+              download
               className="p-2 hover:bg-gray-200 rounded-full transition-colors"
-              title="在新标签页打开"
+              title="下载原文件"
             >
               <Download className="w-4 h-4 text-gray-500" />
             </a>
@@ -116,12 +117,23 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
             <span className="text-sm">加载失败：{error}</span>
           </div>
         ) : isPdf ? (
-          /* Native PDF rendering via iframe */
-          <iframe
-            src={`${API_BASE}/docs/${docId}/file`}
-            className="w-full h-full border-0"
-            title="PDF Preview"
-          />
+          /* Native PDF rendering via object tag with cache-busting URL */
+          <object
+            data={`${API_BASE}/docs/${docId}/file?t=${Date.now()}`}
+            type="application/pdf"
+            className="w-full h-full min-h-[80vh] border-0"
+          >
+            <div className="flex flex-col items-center justify-center h-full text-gray-400 p-4">
+              <p className="text-sm mb-2">无法直接预览此 PDF</p>
+              <a
+                href={`${API_BASE}/docs/${docId}/file`}
+                download
+                className="text-indigo-600 underline text-sm hover:text-indigo-800"
+              >
+                点击下载原文件
+              </a>
+            </div>
+          </object>
         ) : isText && data?.content ? (
           /* Markdown / text rendering */
           <div className="h-full overflow-y-auto p-6 md:p-8">
