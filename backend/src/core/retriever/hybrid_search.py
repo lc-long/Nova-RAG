@@ -8,7 +8,7 @@ from typing import Optional
 
 from .bm25_index import BM25Indexer, _normalize_text
 from .query_rewriter import QueryRewriter
-from .reranker import Reranker
+from .aliyun_reranker import AliyunReranker
 
 # Scale-up constants: initial recall pool before RRF fusion
 _RECALL_MULTIPLIER = 6   # top_k * 6 → initial召回量
@@ -35,7 +35,7 @@ class HybridRetriever:
         self.distance_threshold = distance_threshold
         self.rrf_k = rrf_k
         self.rewriter = rewriter or QueryRewriter()
-        self.reranker = Reranker()
+        self.reranker = AliyunReranker()
 
     def retrieve(self, query: str, top_k: int = 5, doc_id: Optional[str] = None) -> list[dict]:
         """Hybrid search: multi-query expanded vector + BM25 with RRF fusion.
