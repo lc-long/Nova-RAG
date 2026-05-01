@@ -19,7 +19,7 @@ import uvicorn
 from .components import create_components
 from .database import Base, engine
 from ..core.storage.vector_store import init_pgvector
-from .routes import docs, chat
+from .routes import docs, chat, conversations
 
 app = FastAPI(title="Nova-RAG Unified Backend")
 
@@ -41,6 +41,7 @@ async def startup():
 
 app.include_router(docs.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
+app.include_router(conversations.router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

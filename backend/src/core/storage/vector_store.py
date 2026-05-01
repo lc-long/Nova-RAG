@@ -1,6 +1,6 @@
 """PostgreSQL + pgvector vector store with parent-child support."""
 import os
-from typing import Optional
+from typing import Optional, List
 
 from sqlalchemy import create_engine, text, Column, String, Integer, Text, DateTime, func
 from sqlalchemy.orm import sessionmaker, declarative_base
@@ -72,8 +72,8 @@ class VectorStore:
         finally:
             session.close()
 
-    def query(self, query_embedding: list[float], top_k: int = 5, doc_id: Optional[str] = None) -> dict:
-        """Query for similar chunks using cosine distance, optionally filtered by doc_id.
+    def query(self, query_embedding: list[float], top_k: int = 5, doc_id: Optional[str] = None, doc_ids: Optional[List[str]] = None) -> dict:
+        """Query for similar chunks using cosine distance, optionally filtered by doc_id(s).
 
         Returns a dict matching the interface expected by hybrid_search.py:
         {"ids": [[...]], "documents": [[...]], "metadatas": [[...]], "distances": [[...]]}
@@ -90,7 +90,9 @@ class VectorStore:
                 DocumentChunk.metadata_,
                 cosine_dist.label("distance"),
             )
-            if doc_id:
+            if doc_ids:
+                q = q.filter(DocumentChunk.doc_id.in_(doc_ids))
+            elif doc_id:
                 q = q.filter(DocumentChunk.doc_id == doc_id)
             q = q.order_by(cosine_dist).limit(top_k)
             rows = q.all()

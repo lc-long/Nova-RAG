@@ -92,6 +92,26 @@ class HybridRetriever:
         reranked = self.reranker.rerank(query, fused, top_k=_OUTPUT_TOP_K)
         return reranked
 
+    def retrieve_multi_docs(self, query: str, top_k: int = 5, doc_ids: list[str] = None) -> list[dict]:
+        """Hybrid search scoped to multiple doc_ids. Merges and deduplicates results."""
+        if not doc_ids:
+            return self.retrieve(query, top_k)
+
+        all_results: list[dict] = []
+        seen_keys: set[str] = set()
+
+        for did in doc_ids:
+            results = self.retrieve(query, top_k, doc_id=did)
+            for r in results:
+                key = r.get("child_id") or r.get("parent_id")
+                if key and key not in seen_keys:
+                    seen_keys.add(key)
+                    all_results.append(r)
+
+        # Re-sort by rerank_score if available, else keep order
+        all_results.sort(key=lambda r: r.get("rerank_score", 0), reverse=True)
+        return all_results[:_OUTPUT_TOP_K]
+
     def _multi_query_vector_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
         """Run vector search across multiple query variants, merge results.
 
