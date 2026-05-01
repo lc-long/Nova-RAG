@@ -6,6 +6,11 @@ import base64
 # Add parent directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
+# Load .env file
+from dotenv import load_dotenv
+env_path = os.path.join(os.path.dirname(__file__), '..', 'backend', '.env')
+load_dotenv(env_path)
+
 from src.core.chunker.pdf_parser import extract_images_from_pdf
 from src.core.ocr import get_ocr_processor
 

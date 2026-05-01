@@ -13,15 +13,20 @@ from ..models import Conversation, MessageModel
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
-# Token limits (approximate: 4 chars ≈ 1 token)
+# Token limits
 MAX_CONTEXT_TOKENS = 4000
 MAX_HISTORY_TOKENS = 2000
-CHARS_PER_TOKEN = 4
 
 
 def estimate_tokens(text: str) -> int:
-    """Estimate token count (approximate)."""
-    return len(text) // CHARS_PER_TOKEN
+    """Estimate token count with better CJK handling.
+
+    Heuristic: Chinese chars ≈ 1.5 tokens each, other chars ≈ 0.25 tokens each.
+    This is much more accurate than len/4 for mixed Chinese-English text.
+    """
+    chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+    other_chars = len(text) - chinese_chars
+    return int(chinese_chars * 1.5 + other_chars * 0.25)
 
 
 def truncate_messages(messages: List[Message], max_tokens: int) -> List[Message]:

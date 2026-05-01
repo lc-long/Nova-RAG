@@ -1,18 +1,13 @@
 """PostgreSQL + pgvector vector store with parent-child support."""
-import os
 from typing import Optional, List
 
-from sqlalchemy import create_engine, text, Column, String, Integer, Text, DateTime, func
-from sqlalchemy.orm import sessionmaker, declarative_base
+from sqlalchemy import text, Column, String, Integer, Text, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
 from pgvector.sqlalchemy import Vector
 from datetime import datetime
 
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5433/novarag")
-
-engine = create_engine(DATABASE_URL, pool_size=10, max_overflow=20)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
+# Reuse the shared engine/session from database module (single connection pool)
+from ...api.database import engine, SessionLocal, Base
 
 
 class DocumentChunk(Base):

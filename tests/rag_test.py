@@ -74,12 +74,12 @@ def test_rag_quality(doc_id: Optional[str] = None):
     }
 
     print("=" * 60)
-    print("Nova-RAG 质量测试")
+    print("Nova-RAG Quality Test")
     print("=" * 60)
 
     for test_group in test_cases:
         category = test_group["category"]
-        print(f"\n📋 测试类别: {category}")
+        print(f"\nCategory: {category}")
         print("-" * 40)
 
         if "questions" in test_group:
@@ -102,25 +102,25 @@ def test_rag_quality(doc_id: Optional[str] = None):
 
     # 打印总结
     print("\n" + "=" * 60)
-    print("📊 测试结果总结")
+    print("Test Results Summary")
     print("=" * 60)
-    print(f"总问题数: {results['total_questions']}")
-    print(f"成功检索: {results['successful_retrievals']}")
-    print(f"正确回答: {results['correct_answers']}")
-    print(f"检测到幻觉: {results['hallucination_detected']}")
+    print(f"Total Questions: {results['total_questions']}")
+    print(f"Successful Retrievals: {results['successful_retrievals']}")
+    print(f"Correct Answers: {results['correct_answers']}")
+    print(f"Hallucinations Detected: {results['hallucination_detected']}")
 
     if results["total_questions"] > 0:
         retrieval_rate = results["successful_retrievals"] / results["total_questions"] * 100
         accuracy_rate = results["correct_answers"] / results["total_questions"] * 100
-        print(f"检索成功率: {retrieval_rate:.1f}%")
-        print(f"回答准确率: {accuracy_rate:.1f}%")
+        print(f"Retrieval Rate: {retrieval_rate:.1f}%")
+        print(f"Accuracy Rate: {accuracy_rate:.1f}%")
 
     return results
 
 
 def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
     """测试单个问题"""
-    print(f"\n❓ 问题: {question}")
+    print(f"\nQ: {question}")
 
     payload = {
         "messages": [{"role": "user", "content": question}],
@@ -140,7 +140,7 @@ def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
         elapsed = time.time() - start_time
 
         if response.status_code != 200:
-            print(f"  ❌ API 错误: {response.status_code}")
+            print(f"  [ERROR] API Error: {response.status_code}")
             return {
                 "question": question,
                 "retrieved": False,
@@ -171,10 +171,10 @@ def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
         retrieved = len(references) > 0
         quality = evaluate_answer_quality(question, answer, references)
 
-        print(f"  ⏱️  耗时: {elapsed:.2f}s")
-        print(f"  📚 检索到: {len(references)} 个片段")
-        print(f"  ✅ 质量: {quality}")
-        print(f"  💬 回答: {answer[:200]}...")
+        print(f"  Time: {elapsed:.2f}s")
+        print(f"  Retrieved: {len(references)} chunks")
+        print(f"  Quality: {quality}")
+        print(f"  Answer: {answer[:200]}...")
 
         return {
             "question": question,
@@ -186,7 +186,7 @@ def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
         }
 
     except Exception as e:
-        print(f"  ❌ 错误: {e}")
+        print(f"  [ERROR] {e}")
         return {
             "question": question,
             "retrieved": False,
@@ -197,12 +197,12 @@ def test_single_question(question: str, doc_id: Optional[str] = None) -> dict:
 
 def test_multi_turn(questions: list, doc_id: Optional[str] = None) -> dict:
     """测试多轮对话"""
-    print(f"\n🔄 多轮对话测试")
+    print(f"\nMulti-turn Test")
     messages = []
     results = []
 
     for i, question in enumerate(questions, 1):
-        print(f"\n  第 {i} 轮: {question}")
+        print(f"\n  Turn {i}: {question}")
         messages.append({"role": "user", "content": question})
 
         payload = {
@@ -233,11 +233,11 @@ def test_multi_turn(questions: list, doc_id: Optional[str] = None) -> dict:
                         pass
 
                 messages.append({"role": "assistant", "content": answer})
-                print(f"  💬 回答: {answer[:150]}...")
+                print(f"  Answer: {answer[:150]}...")
                 results.append({"question": question, "answer": answer})
 
         except Exception as e:
-            print(f"  ❌ 错误: {e}")
+            print(f"  [ERROR] {e}")
 
     return {
         "type": "multi_turn",
