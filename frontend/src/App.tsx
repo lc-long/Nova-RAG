@@ -1,46 +1,22 @@
-import { useState, useEffect, useCallback } from 'react'
 import { Toaster } from 'react-hot-toast'
-import axios from 'axios'
+import { useDocuments } from './hooks/useDocuments'
+import { useConversations } from './hooks/useConversations'
+import { useAppStore } from './store/useAppStore'
 import Sidebar from './components/Sidebar'
 import ChatArea from './components/ChatArea'
 import DocumentPreviewer from './components/DocumentPreviewer'
-import { API_BASE_URL } from './config'
-
-const API_BASE = API_BASE_URL
-
-interface DocItem {
-  id: string
-  name: string
-}
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 function App() {
-  const [currentDoc, setCurrentDoc] = useState<string | null>(null)
-  const [previewDocId, setPreviewDocId] = useState<string | null>(null)
-  const [conversationId, setConversationId] = useState<string | null>(null)
-  const [docs, setDocs] = useState<DocItem[]>([])
-  const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const docs = useAppStore((s) => s.docs)
+  const {
+    previewDocId, handleClosePreview, handlePreview,
+  } = useDocuments()
+  const { loadConversations } = useConversations()
 
-  const fetchDocs = useCallback(async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/docs`, { timeout: 5000 })
-      setDocs(response.data.map((d: any) => ({ id: d.id, name: d.name })))
-    } catch { /* silent */ }
-  }, [])
-
-  useEffect(() => { fetchDocs() }, [fetchDocs])
-
-  const handleConversationChange = useCallback((id: string | null) => {
-    setConversationId(id)
-    setRefreshTrigger(prev => prev + 1)
-  }, [])
-
-  const handlePreview = useCallback((docId: string) => {
-    setPreviewDocId(docId)
-  }, [])
-
-  const handleClosePreview = useCallback(() => {
-    setPreviewDocId(null)
-  }, [])
+  const handleConversationChange = () => {
+    loadConversations()
+  }
 
   return (
     <>
@@ -56,21 +32,8 @@ function App() {
         }}
       />
       <div className="flex h-screen bg-gray-50 relative">
-        <Sidebar
-          currentDoc={currentDoc}
-          onSelectDoc={setCurrentDoc}
-          currentConversation={conversationId}
-          onSelectConversation={handleConversationChange}
-          refreshTrigger={refreshTrigger}
-          onPreview={handlePreview}
-        />
-        <ChatArea
-          currentDoc={currentDoc}
-          conversationId={conversationId}
-          onConversationChange={handleConversationChange}
-          docs={docs}
-          onPreview={handlePreview}
-        />
+        <Sidebar onConversationChange={handleConversationChange} />
+        <ChatArea docs={docs} onPreview={handlePreview} />
         {previewDocId && (
           <div className="absolute top-0 right-0 h-full w-[45%] min-w-[360px] max-w-[640px] z-30">
             <DocumentPreviewer docId={previewDocId} onClose={handleClosePreview} />
@@ -81,4 +44,10 @@ function App() {
   )
 }
 
-export default App
+export default function AppWithBoundary() {
+  return (
+    <ErrorBoundary>
+      <App />
+    </ErrorBoundary>
+  )
+}

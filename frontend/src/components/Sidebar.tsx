@@ -1,37 +1,12 @@
-import { useState, useEffect } from 'react'
-import axios from 'axios'
+import { useState } from 'react'
 import toast from 'react-hot-toast'
 import { Upload, FileText, Trash2, BookOpen, Loader2, MessageSquare, Plus, Hash, CheckSquare, Square, X } from 'lucide-react'
+import { useDocuments } from '../hooks/useDocuments'
+import { useConversations } from '../hooks/useConversations'
 
 interface SidebarProps {
-  currentDoc: string | null
-  onSelectDoc: (doc: string) => void
-  currentConversation: string | null
-  onSelectConversation: (id: string | null) => void
-  refreshTrigger: number
-  onPreview?: (docId: string) => void
+  onConversationChange?: () => void
 }
-
-interface Document {
-  id: string
-  name: string
-  size: string
-  date: string
-  status?: string
-}
-
-interface Conversation {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-}
-
-import { API_BASE_URL } from '../config'
-
-const API_BASE = API_BASE_URL
-
-type TabType = 'docs' | 'chats'
 
 /* Status dot indicator */
 function StatusDot({ status }: { status?: string }) {
@@ -46,36 +21,21 @@ function StatusDot({ status }: { status?: string }) {
   return <span className={`w-2 h-2 rounded-full ${color} shrink-0`} title={title} />
 }
 
-export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, onSelectConversation, refreshTrigger, onPreview }: SidebarProps) {
-  const [tab, setTab] = useState<TabType>('docs')
-  const [docs, setDocs] = useState<Document[]>([])
-  const [conversations, setConversations] = useState<Conversation[]>([])
-  const [loading, setLoading] = useState(false)
-  const [uploading, setUploading] = useState(false)
+export default function Sidebar({ onConversationChange }: SidebarProps) {
+  const [tab, setTab] = useState<'docs' | 'chats'>('docs')
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [batchDeleting, setBatchDeleting] = useState(false)
+  const [uploading, setUploading] = useState(false)
 
-  useEffect(() => { fetchDocs() }, [])
-  useEffect(() => { fetchConversations() }, [refreshTrigger])
+  const {
+    docs, loadingDocs, currentDoc, setCurrentDoc,
+    handleUpload, handleDelete, handleBatchDelete, handlePreview,
+  } = useDocuments()
 
-  const fetchDocs = async () => {
-    setLoading(true)
-    try {
-      const response = await axios.get(`${API_BASE}/docs`, { timeout: 5000 })
-      setDocs(response.data)
-    } catch {
-      toast.error('网络错误：无法连接到后端服务器')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const fetchConversations = async () => {
-    try {
-      const response = await axios.get(`${API_BASE}/conversations`, { timeout: 5000 })
-      setConversations(response.data)
-    } catch { /* silent */ }
-  }
+  const {
+    conversations, conversationId,
+    handleSelectConversation, handleNewChat, handleDeleteConversation,
+  } = useConversations()
 
   const toggleSelect = (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -97,14 +57,12 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
 
   const clearSelection = () => setSelectedIds(new Set())
 
-  const handleBatchDelete = async () => {
+  const onBatchDelete = async () => {
     if (selectedIds.size === 0) return
     if (!window.confirm(`确定要删除选中的 ${selectedIds.size} 个文档吗？`)) return
     setBatchDeleting(true)
     try {
-      await axios.post(`${API_BASE}/docs/batch-delete`, { doc_ids: Array.from(selectedIds) })
-      setDocs(prev => prev.filter(d => !selectedIds.has(d.id)))
-      toast.success(`已删除 ${selectedIds.size} 个文档`)
+      await handleBatchDelete(Array.from(selectedIds))
       setSelectedIds(new Set())
     } catch {
       toast.error('批量删除失败，请重试')
@@ -113,72 +71,49 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
     }
   }
 
-  const handleDelete = async (id: string, e: React.MouseEvent) => {
+  const onDeleteDoc = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
     if (!window.confirm('确定要删除该文档吗？')) return
     try {
-      await axios.delete(`${API_BASE}/docs/${id}`)
-      setDocs(prev => prev.filter(d => d.id !== id))
+      await handleDelete(id)
       setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n })
-      toast.success('文档已删除')
     } catch {
       toast.error('删除失败，请重试')
     }
   }
 
-  const handleDeleteConversation = async (id: string, e: React.MouseEvent) => {
+  const onSelectDoc = (id: string) => {
+    setCurrentDoc(id)
+    handlePreview(id)
+  }
+
+  const onDeleteConversation = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    try {
-      await axios.delete(`${API_BASE}/conversations/${id}`)
-      setConversations(prev => prev.filter(c => c.id !== id))
-      if (currentConversation === id) onSelectConversation(null)
-    } catch { /* silent */ }
+    await handleDeleteConversation(id)
+    onConversationChange?.()
   }
 
-  const handleNewChat = () => {
-    onSelectConversation(null)
+  const onSelectConversation = (id: string) => {
+    handleSelectConversation(id)
+    onConversationChange?.()
   }
 
-  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const onNewChat = () => {
+    handleNewChat()
+    onConversationChange?.()
+  }
+
+  const onUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files
     if (!fileList || fileList.length === 0) return
     const files = Array.from(fileList)
     setUploading(true)
-
-    const results = await Promise.allSettled(
-      files.map(async (file) => {
-        const formData = new FormData()
-        formData.append('file', file)
-        const response = await axios.post(`${API_BASE}/docs/upload`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' },
-          timeout: 60000,
-        })
-        return {
-          id: response.data.id || Date.now().toString(),
-          name: file.name,
-          size: `${(file.size / 1024).toFixed(0)}KB`,
-          date: new Date().toISOString().split('T')[0],
-          status: 'processing',
-        } as Document
-      })
-    )
-
-    const succeeded: Document[] = []
-    const failed: string[] = []
-    results.forEach((r, i) => {
-      if (r.status === 'fulfilled') succeeded.push(r.value)
-      else failed.push(files[i].name)
-    })
-
-    if (succeeded.length > 0) {
-      setDocs(prev => [...succeeded, ...prev])
-      toast.success(`成功上传 ${succeeded.length} 个文档`)
+    try {
+      await handleUpload(files)
+    } finally {
+      setUploading(false)
+      e.target.value = ''
     }
-    if (failed.length > 0) toast.error(`以下文件上传失败：${failed.join(', ')}`)
-
-    setUploading(false)
-    e.target.value = ''
-    fetchDocs()
   }
 
   const isAllSelected = docs.length > 0 && selectedIds.size === docs.length
@@ -215,12 +150,12 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
             ) : (
               <><Upload className="w-4 h-4" /><span className="text-sm font-medium">上传文档</span></>
             )}
-            <input type="file" accept=".pdf,.docx,.xlsx,.csv,.md,.pptx,.txt" multiple className="hidden" onChange={handleUpload} disabled={uploading} />
+            <input type="file" accept=".pdf,.docx,.xlsx,.csv,.md,.pptx,.txt" multiple className="hidden" onChange={onUpload} disabled={uploading} />
           </label>
         )}
 
         {tab === 'chats' && (
-          <button onClick={handleNewChat}
+          <button onClick={onNewChat}
             className="flex items-center justify-center gap-2 w-full py-3 px-4 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg transition-colors">
             <Plus className="w-4 h-4" /><span className="text-sm font-medium">新对话</span>
           </button>
@@ -232,7 +167,7 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
         <div className="px-4 py-2 bg-red-50 border-b border-red-100 flex items-center justify-between">
           <span className="text-xs text-red-600 font-medium">已选 {selectedIds.size} 项</span>
           <div className="flex items-center gap-2">
-            <button onClick={handleBatchDelete} disabled={batchDeleting}
+            <button onClick={onBatchDelete} disabled={batchDeleting}
               className="flex items-center gap-1 px-2 py-1 text-xs bg-red-500 text-white rounded hover:bg-red-600 disabled:opacity-50 transition-colors">
               {batchDeleting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
               删除
@@ -256,7 +191,7 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
                 <span className="font-medium uppercase tracking-wider">全选</span>
               </button>
             )}
-            {loading ? (
+            {loadingDocs ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
               </div>
@@ -265,7 +200,7 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
             ) : (
               <div className="space-y-1">
                 {docs.map(doc => (
-                  <div key={doc.id} onClick={() => { onSelectDoc(doc.id); onPreview?.(doc.id) }}
+                  <div key={doc.id} onClick={() => onSelectDoc(doc.id)}
                     className={`group flex items-center gap-2.5 p-2.5 rounded-lg cursor-pointer transition-all ${
                       currentDoc === doc.id ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-100'
                     }`}>
@@ -282,7 +217,7 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
                       <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
                       <p className="text-[11px] text-gray-400">{doc.size}</p>
                     </div>
-                    <button onClick={(e) => handleDelete(doc.id, e)}
+                    <button onClick={(e) => onDeleteDoc(doc.id, e)}
                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 hover:text-red-500 rounded transition-opacity"
                       title="删除文档">
                       <Trash2 className="w-3.5 h-3.5" />
@@ -302,14 +237,14 @@ export default function Sidebar({ currentDoc, onSelectDoc, currentConversation, 
                 {conversations.map(conv => (
                   <div key={conv.id} onClick={() => onSelectConversation(conv.id)}
                     className={`group flex items-center gap-3 p-3 rounded-lg cursor-pointer transition-all ${
-                      currentConversation === conv.id ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-100'
+                      conversationId === conv.id ? 'bg-indigo-50 border border-indigo-200' : 'hover:bg-gray-100'
                     }`}>
                     <Hash className="w-5 h-5 text-gray-400 shrink-0" />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-gray-900 truncate">{conv.title}</p>
                       <p className="text-xs text-gray-500">{new Date(conv.updated_at).toLocaleDateString()}</p>
                     </div>
-                    <button onClick={(e) => handleDeleteConversation(conv.id, e)}
+                    <button onClick={(e) => onDeleteConversation(conv.id, e)}
                       className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-100 hover:text-red-500 rounded transition-opacity"
                       title="删除会话">
                       <Trash2 className="w-4 h-4" />

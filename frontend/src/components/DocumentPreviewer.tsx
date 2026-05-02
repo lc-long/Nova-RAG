@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import DOMPurify from 'dompurify'
 import mammoth from 'mammoth'
 import { X, Loader2, FileText, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react'
 import { API_BASE_URL } from '../config'
@@ -41,13 +42,20 @@ function fetchAsArrayBuffer(url: string): Promise<ArrayBuffer> {
   })
 }
 
+interface RenderTask {
+  cancel: () => void
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type PdfDoc = any
+
 export default function DocumentPreviewer({ docId, onClose }: Props) {
   const [data, setData] = useState<PreviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [docxHtml, setDocxHtml] = useState<string | null>(null)
 
-  const [pdfDoc, setPdfDoc] = useState<any>(null)
+  const [pdfDoc, setPdfDoc] = useState<PdfDoc>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(0)
   const RENDER_SCALE = 2
@@ -55,11 +63,15 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   const [rendering, setRendering] = useState(false)
 
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const pdfDocRef = useRef<any>(null)
-  const renderingTaskRef = useRef<any>(null)
+  const pdfDocRef = useRef<PdfDoc>(null)
+  const renderingTaskRef = useRef<RenderTask | null>(null)
+  const prevDocIdRef = useRef<string | null>(null)
 
   useEffect(() => {
-    setLoading(true)
+    // Only reset state when docId actually changes
+    if (prevDocIdRef.current === docId) return
+    prevDocIdRef.current = docId
+
     setError(null)
     setData(null)
     setDocxHtml(null)
@@ -86,7 +98,7 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
     fetchAsArrayBuffer(`${API_BASE}/docs/${docId}/preview`)
       .then(arrayBuffer => mammoth.convertToHtml({ arrayBuffer }))
       .then(result => {
-        if (!cancelled) setDocxHtml(result.value)
+        if (!cancelled) setDocxHtml(DOMPurify.sanitize(result.value))
       })
       .catch(() => {
         if (!cancelled) setDocxHtml(null)
@@ -153,26 +165,26 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
       const ctx = canvas.getContext('2d')
       if (!ctx) return
 
-      const viewport = page.getViewport({ scale: RENDER_SCALE })
+      const viewport = page.getViewport({ scale: RENDER_SCALE * (zoom / 100) })
       canvas.width = viewport.width
       canvas.height = viewport.height
 
       const renderTask = page.render({
         canvasContext: ctx,
         viewport: viewport,
-      } as any)
+      })
 
-      renderingTaskRef.current = renderTask
+      renderingTaskRef.current = renderTask as unknown as RenderTask
       await renderTask.promise
       renderingTaskRef.current = null
-    } catch (err: any) {
-      if (err?.name !== 'RenderingCancelledException') {
+    } catch (err) {
+      if ((err as Error)?.name !== 'RenderingCancelledException') {
         console.error('Page rendering failed:', err)
       }
     } finally {
       setRendering(false)
     }
-  }, [])
+  }, [zoom])
 
   useEffect(() => {
     if (pdfDoc && currentPage > 0) {
@@ -187,16 +199,12 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   }, [onClose])
 
   const handlePrevPage = useCallback(() => {
-    if (currentPage > 1) {
-      setCurrentPage(prev => prev - 1)
-    }
-  }, [currentPage])
+    setCurrentPage(prev => Math.max(1, prev - 1))
+  }, [])
 
   const handleNextPage = useCallback(() => {
-    if (currentPage < totalPages) {
-      setCurrentPage(prev => prev + 1)
-    }
-  }, [currentPage, totalPages])
+    setCurrentPage(prev => Math.min(totalPages, prev + 1))
+  }, [totalPages])
 
   const handleZoomIn = useCallback(() => {
     setZoom(prev => Math.min(prev + 20, 300))
@@ -336,7 +344,6 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
               <canvas
                 ref={canvasRef}
                 className="shadow-lg bg-white"
-                style={{ transform: `scale(${zoom / 100})`, transformOrigin: 'top center' }}
               />
             </div>
           </div>
