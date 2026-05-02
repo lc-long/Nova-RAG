@@ -36,3 +36,6 @@ SHORT_QUERY_THRESHOLD = int(os.getenv("SHORT_QUERY_THRESHOLD", "10"))
 
 # --- Query expansion patterns (JSON file path, optional) ---
 QUERY_PATTERNS_FILE = os.getenv("QUERY_PATTERNS_FILE", "")
+
+# --- Image Storage ---
+IMAGE_STORAGE_DIR = os.getenv("IMAGE_STORAGE_DIR", "uploads/images")

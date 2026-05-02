@@ -1,5 +1,6 @@
 """PostgreSQL + pgvector vector store with parent-child support."""
 from typing import Optional, List
+from dataclasses import dataclass
 
 from sqlalchemy import text, Column, String, Integer, Text, DateTime
 from sqlalchemy.dialects.postgresql import JSONB
@@ -8,6 +9,17 @@ from datetime import datetime
 
 # Reuse the shared engine/session from database module (single connection pool)
 from ...api.database import engine, SessionLocal, Base
+
+
+@dataclass
+class ImageChunkData:
+    chunk_id: str
+    doc_id: str
+    page_num: int
+    image_idx: int
+    description: str
+    image_path: str
+    metadata: dict = None
 
 
 class DocumentChunk(Base):
@@ -19,6 +31,20 @@ class DocumentChunk(Base):
     parent_id = Column(String, nullable=True, index=True)
     content = Column(Text, nullable=False)
     embedding = Column(Vector(1024), nullable=False)
+    metadata_ = Column("metadata", JSONB, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ImageChunk(Base):
+    __tablename__ = "image_chunks"
+
+    id = Column(String, primary_key=True)
+    doc_id = Column(String, nullable=False, index=True)
+    page_num = Column(Integer, nullable=False)
+    image_idx = Column(Integer, nullable=False, default=0)
+    description = Column(Text, nullable=False)
+    image_path = Column(String, nullable=False)
+    embedding = Column(Vector(1024), nullable=True)
     metadata_ = Column("metadata", JSONB, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -138,6 +164,100 @@ class VectorStore:
         except Exception as e:
             session.rollback()
             print(f"[VectorStore] delete_by_doc_id error: {e}")
+            return 0
+        finally:
+            session.close()
+
+    def add_image_chunks(self, image_chunks: list[ImageChunkData], embeddings: list[list[float]] = None) -> None:
+        """Add image chunks with optional embeddings."""
+        if not image_chunks:
+            return
+        session = SessionLocal()
+        try:
+            for i, img_chunk in enumerate(image_chunks):
+                row = ImageChunk(
+                    id=img_chunk.chunk_id,
+                    doc_id=img_chunk.doc_id,
+                    page_num=img_chunk.page_num,
+                    image_idx=img_chunk.image_idx,
+                    description=img_chunk.description,
+                    image_path=img_chunk.image_path,
+                    embedding=embeddings[i] if embeddings and i < len(embeddings) else None,
+                    metadata_=img_chunk.metadata or {},
+                )
+                session.add(row)
+            session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    def query_images(self, query_embedding: list[float], top_k: int = 5, doc_id: Optional[str] = None, doc_ids: Optional[List[str]] = None) -> list[dict]:
+        """Query for similar image chunks using cosine distance."""
+        session = SessionLocal()
+        try:
+            cosine_dist = ImageChunk.embedding.cosine_distance(query_embedding)
+            q = session.query(
+                ImageChunk.id,
+                ImageChunk.doc_id,
+                ImageChunk.page_num,
+                ImageChunk.image_idx,
+                ImageChunk.description,
+                ImageChunk.image_path,
+                ImageChunk.metadata_,
+                cosine_dist.label("distance"),
+            )
+            if doc_ids:
+                q = q.filter(ImageChunk.doc_id.in_(doc_ids))
+            elif doc_id:
+                q = q.filter(ImageChunk.doc_id == doc_id)
+            q = q.order_by(cosine_dist).limit(top_k)
+            rows = q.all()
+
+            results = []
+            for row in rows:
+                results.append({
+                    "chunk_id": row.id,
+                    "doc_id": row.doc_id,
+                    "page_num": row.page_num,
+                    "image_idx": row.image_idx,
+                    "description": row.description,
+                    "image_path": row.image_path,
+                    "distance": row.distance,
+                    "metadata": row.metadata_ or {},
+                })
+            return results
+        finally:
+            session.close()
+
+    def get_image_chunks_by_doc_id(self, doc_id: str) -> list[dict]:
+        """Get all image chunks for a document."""
+        session = SessionLocal()
+        try:
+            rows = session.query(ImageChunk).filter(ImageChunk.doc_id == doc_id).all()
+            return [{
+                "chunk_id": row.id,
+                "doc_id": row.doc_id,
+                "page_num": row.page_num,
+                "image_idx": row.image_idx,
+                "description": row.description,
+                "image_path": row.image_path,
+                "metadata": row.metadata_ or {},
+            } for row in rows]
+        finally:
+            session.close()
+
+    def delete_image_chunks_by_doc_id(self, doc_id: str) -> int:
+        """Delete all image chunks for a document."""
+        session = SessionLocal()
+        try:
+            count = session.query(ImageChunk).filter(ImageChunk.doc_id == doc_id).delete()
+            session.commit()
+            return count
+        except Exception as e:
+            session.rollback()
+            print(f"[VectorStore] delete_image_chunks_by_doc_id error: {e}")
             return 0
         finally:
             session.close()

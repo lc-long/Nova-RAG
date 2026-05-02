@@ -89,16 +89,18 @@ def run_ingestion(components, doc_id: str, filename: str, file_path: str):
     from ...core.chunker.csv_parser import extract_text_from_csv
     from ...core.chunker.ppt_parser import extract_text_from_pptx
     from ...core.ocr import process_pdf_images
+    from ...core.storage.vector_store import ImageChunkData
+    import uuid
 
     db = get_db_session()
     try:
         ext = Path(filename).suffix.lower()
+        ocr_results = []
 
         if ext == ".pdf":
             pages = extract_text_from_pdf_with_pages(file_path)
             text = "\n\n".join(t for _, t in pages if t.strip())
 
-            # OCR: extract image descriptions from PDF and merge into text
             try:
                 ocr_results = asyncio.run(process_pdf_images(file_path, doc_id))
                 if ocr_results:
@@ -134,6 +136,30 @@ def run_ingestion(components, doc_id: str, filename: str, file_path: str):
         embeddings = components.embedder.embed([c.content for c in chunks])
         components.vector_store.add_chunks(chunks, embeddings, source=filename)
         components.bm25_indexer.add_chunks(chunks)
+
+        # Store image chunks (OCR results with image paths)
+        if ocr_results:
+            image_chunks = []
+            for img in ocr_results:
+                img_chunk = ImageChunkData(
+                    chunk_id=f"{doc_id}_img_{img.get('page_num', 0)}_{img.get('image_idx', 0)}",
+                    doc_id=doc_id,
+                    page_num=img.get('page_num', 0),
+                    image_idx=img.get('image_idx', 0),
+                    description=img.get('description', ''),
+                    image_path=img.get('image_path', ''),
+                    metadata={
+                        'source': filename,
+                        'width': img.get('width', 0),
+                        'height': img.get('height', 0),
+                    },
+                )
+                image_chunks.append(img_chunk)
+
+            if image_chunks:
+                desc_embeddings = components.embedder.embed([ic.description for ic in image_chunks])
+                components.vector_store.add_image_chunks(image_chunks, desc_embeddings)
+                logger.info(f"[OCR] Stored {len(image_chunks)} image chunks in DB")
 
         doc = db.query(Document).filter(Document.id == doc_id).first()
         if doc:
@@ -271,6 +297,43 @@ async def download_document(doc_id: str, db: Session = Depends(get_db)):
             "Content-Type": media_type,
         },
     )
+
+
+@router.get("/{doc_id}/images/{image_idx}")
+async def get_document_image(doc_id: str, image_idx: int, db: Session = Depends(get_db)):
+    """Serve an image file from the image storage directory."""
+    import os
+    from ...core.config import IMAGE_STORAGE_DIR
+
+    image_dir = os.path.join(IMAGE_STORAGE_DIR, doc_id)
+
+    if not os.path.exists(image_dir):
+        raise HTTPException(status_code=404, detail="Image directory not found")
+
+    try:
+        files = sorted(os.listdir(image_dir))
+        if image_idx < 0 or image_idx >= len(files):
+            raise HTTPException(status_code=404, detail="Image index out of range")
+
+        image_path = os.path.join(image_dir, files[image_idx])
+        ext = os.path.splitext(files[image_idx])[1].lower()
+
+        media_type_map = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.webp': 'image/webp',
+        }
+        media_type = media_type_map.get(ext, 'application/octet-stream')
+
+        return FileResponse(
+            path=image_path,
+            media_type=media_type,
+        )
+    except Exception as e:
+        logger.warning(f"[Docs] Error serving image {doc_id}/{image_idx}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to serve image")
 
 
 @router.delete("/{doc_id}")

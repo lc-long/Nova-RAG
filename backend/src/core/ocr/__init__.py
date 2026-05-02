@@ -221,22 +221,26 @@ def get_ocr_processor() -> OCRProcessor:
     return _ocr_processor
 
 
-async def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
+async def process_pdf_images(file_path: str, doc_id: str, output_dir: str = None) -> list[dict]:
     """Extract and process images from PDF with intelligent async OCR strategy.
 
     Strategy:
     1. Check cache first (based on file hash)
-    2. Try extracting embedded images first
+    2. Try extracting embedded images first (save to uploads/images/{doc_id}/)
     3. If no embedded images, do page screenshots for pages with little text
     4. Limit OCR pages to control API costs
 
     Args:
         file_path: Path to PDF file
         doc_id: Document ID for naming
+        output_dir: Directory to save extracted images (default: uploads/images/{doc_id}/)
 
     Returns:
-        List of dicts with image descriptions
+        List of dicts with image descriptions and permanent image paths
     """
+    from ..chunker.pdf_parser import extract_images_from_pdf, get_page_screenshots
+    import pdfplumber
+
     # Check cache first
     file_hash = _get_file_hash(file_path)
     cached = _load_ocr_cache(file_hash)
@@ -244,15 +248,16 @@ async def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
         print(f"[OCR] Cache hit for {file_path} ({len(cached)} results)")
         return cached
 
-    from ..chunker.pdf_parser import extract_images_from_pdf, get_page_screenshots
-    import pdfplumber
-
-    # Create temp directory for images
-    temp_dir = os.path.join(os.path.dirname(file_path), f"temp_images_{doc_id}")
+    # Determine output directory for persistent image storage
+    if output_dir is None:
+        from ..config import IMAGE_STORAGE_DIR
+        output_dir = os.path.join(IMAGE_STORAGE_DIR, doc_id)
 
     try:
+        os.makedirs(output_dir, exist_ok=True)
+
         # Step 1: Try extracting embedded images
-        images = extract_images_from_pdf(file_path, temp_dir)
+        images = extract_images_from_pdf(file_path, output_dir)
 
         if images:
             print(f"[OCR] Found {len(images)} embedded images in PDF")
@@ -261,27 +266,21 @@ async def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
             return results
 
         # Step 2: No embedded images - use page screenshots
-        # Adaptive OCR strategy: OCR key pages + pages with visual content
         print("[OCR] No embedded images found, analyzing pages for OCR...")
 
         pages_to_ocr = []
-        max_ocr_pages = 15  # Budget limit
+        max_ocr_pages = 15
 
         with pdfplumber.open(file_path) as pdf:
-            total_pages = len(pdf.pages)
-
-            # Strategy: OCR first 3 pages (cover/TOC/summary) + pages with visual indicators
             for page_num, page in enumerate(pdf.pages, start=1):
                 text = page.extract_text() or ""
 
-                # Always OCR first 3 pages
                 if page_num <= 3:
                     pages_to_ocr.append(page_num)
                     continue
 
-                # OCR pages with visual content indicators
                 visual_indicators = [
-                    len(text.strip()) < 200,  # Little text = likely image/chart heavy
+                    len(text.strip()) < 200,
                     'chart' in text.lower() or '图' in text,
                     'figure' in text.lower() or 'fig.' in text.lower(),
                     'diagram' in text.lower() or '架构' in text,
@@ -296,22 +295,16 @@ async def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
 
         print(f"[OCR] Selected {len(pages_to_ocr)} pages for screenshot OCR: {pages_to_ocr}")
 
-        # Step 3: Take screenshots of selected pages
-        all_screenshots = get_page_screenshots(file_path, temp_dir)
+        all_screenshots = get_page_screenshots(file_path, output_dir)
         selected_screenshots = [s for s in all_screenshots if s["page_num"] in pages_to_ocr]
 
         results = await _process_image_list(selected_screenshots)
         _save_ocr_cache(file_hash, results)
         return results
 
-    finally:
-        # Cleanup temp directory
-        try:
-            import shutil
-            if os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir)
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"[OCR] process_pdf_images error: {e}")
+        return []
 
 
 async def _process_image_list(images: list[dict]) -> list[dict]:

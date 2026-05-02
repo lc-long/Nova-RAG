@@ -24,6 +24,12 @@ logger = logging.getLogger("nova_rag")
 class HybridRetriever:
     """Async hybrid retriever using vector + BM25 with RRF fusion."""
 
+    IMAGE_QUERY_KEYWORDS = [
+        '图片', '图像', '照片', '截图', 'pic', 'image', 'photo', 'picture',
+        '图表', 'fig', 'figure', 'diagram', '截图', '架构图', '流程图',
+        'show me', 'what is this', '这是什么', '图片中', '图像中',
+    ]
+
     def __init__(
         self,
         vector_store,
@@ -41,6 +47,32 @@ class HybridRetriever:
         self.rewriter = rewriter or QueryRewriter()
         self.reranker = AliyunReranker()
         self.self_query = SelfQueryRetriever()
+
+    def _is_image_query(self, query: str) -> bool:
+        """Check if query is likely about images."""
+        q_lower = query.lower()
+        return any(kw in q_lower for kw in self.IMAGE_QUERY_KEYWORDS)
+
+    async def retrieve_image_chunks(self, query: str, top_k: int = 5, doc_id: Optional[str] = None, doc_ids: Optional[list] = None) -> list[dict]:
+        """Retrieve image chunks by searching their descriptions."""
+        try:
+            query_embedding = await asyncio.to_thread(self.embedder.embed, [query])
+            query_embedding = query_embedding[0]
+
+            if doc_ids:
+                image_results = await asyncio.to_thread(self.vector_store.query_images, query_embedding, top_k * 2, doc_ids=doc_ids)
+            elif doc_id:
+                image_results = await asyncio.to_thread(self.vector_store.query_images, query_embedding, top_k * 2, doc_id=doc_id)
+            else:
+                image_results = await asyncio.to_thread(self.vector_store.query_images, query_embedding, top_k * 2)
+
+            if not image_results:
+                return []
+
+            return image_results[:top_k]
+        except Exception as e:
+            logger.warning(f"[HybridRetriever] Image retrieval failed: {e}")
+            return []
 
     async def retrieve(self, query: str, top_k: int = 5, doc_id: Optional[str] = None) -> list[dict]:
         """Async hybrid search with self-query, multi-query expansion, and RRF fusion."""

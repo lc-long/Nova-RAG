@@ -108,6 +108,10 @@ async def chat_completions(request: Request, body: ChatRequest):
 
     messages = truncate_messages(all_messages, MAX_HISTORY_TOKENS)
 
+    # Check if this is an image-related query
+    is_image_query = components.retriever._is_image_query(last_query)
+
+    # Retrieve text chunks
     if effective_doc_ids and len(effective_doc_ids) == 1:
         context_chunks = await components.retriever.retrieve(last_query, top_k=8, doc_id=effective_doc_ids[0])
     elif effective_doc_ids and len(effective_doc_ids) > 1:
@@ -116,6 +120,31 @@ async def chat_completions(request: Request, body: ChatRequest):
         context_chunks = await components.retriever.retrieve(last_query, top_k=8)
     if not context_chunks:
         context_chunks = []
+
+    # Retrieve image chunks if query seems image-related
+    image_chunks = []
+    if is_image_query:
+        if effective_doc_ids and len(effective_doc_ids) == 1:
+            image_chunks = await components.retriever.retrieve_image_chunks(last_query, top_k=4, doc_id=effective_doc_ids[0])
+        elif effective_doc_ids and len(effective_doc_ids) > 1:
+            image_chunks = await components.retriever.retrieve_image_chunks(last_query, top_k=4, doc_ids=effective_doc_ids)
+        else:
+            image_chunks = await components.retriever.retrieve_image_chunks(last_query, top_k=4)
+        logger.info(f"[Chat] Image query detected, retrieved {len(image_chunks)} image chunks")
+
+    # Add image info to context chunks for LLM
+    if image_chunks:
+        for img in image_chunks:
+            img_desc = img.get('description', '')
+            img_path = img.get('image_path', '')
+            page_num = img.get('page_num', 0)
+            context_chunks.append({
+                "doc_id": img.get('doc_id', 'Unknown'),
+                "page_number": page_num,
+                "parent_content": f"[图片 - 第{page_num}页] {img_desc}\n图片文件: {img_path}",
+                "_type": "image",
+                "image_path": img_path,
+            })
 
     # Prompt compression: extract relevant content from chunks
     from ...core.retriever.compressor import compress_chunks
