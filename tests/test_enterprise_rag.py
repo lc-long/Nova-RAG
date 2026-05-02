@@ -21,7 +21,7 @@ import requests
 sys.stdout.reconfigure(encoding='utf-8')
 
 API_BASE = 'http://localhost:5000/api/v1'
-DOC_ID = '74488652-1a0f-4449-8252-465a1f4d0d3c'  # enterprise_test_doc.pdf
+DOC_ID = '10b42cf1-a529-4b1c-9670-a463f2382966'  # enterprise_test_doc.pdf
 
 
 def ask_question(question, doc_id=None, timeout=60):

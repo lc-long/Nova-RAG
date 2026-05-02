@@ -72,20 +72,9 @@ def run_ingestion(components, doc_id: str, filename: str, file_path: str):
 
     try:
         if filename.endswith(".pdf"):
-            # Extract page-by-page text for proper OCR association
+            # Extract page-by-page text
             pages = extract_text_from_pdf_with_pages(file_path)
-
-            # Process images with OCR (async)
-            try:
-                image_results = asyncio.run(process_pdf_images(file_path, doc_id))
-                if image_results:
-                    print(f"[DocsUpload] OCR: Found {len(image_results)} images with descriptions")
-                    text = merge_ocr_into_text(pages, image_results)
-                else:
-                    text = "\n\n".join(t for _, t in pages if t.strip())
-            except Exception as e:
-                print(f"[DocsUpload] OCR processing failed (non-fatal): {e}")
-                text = "\n\n".join(t for _, t in pages if t.strip())
+            text = "\n\n".join(t for _, t in pages if t.strip())
                 
         elif filename.endswith(".docx"):
             text = extract_text_from_docx(file_path)
