@@ -72,7 +72,7 @@ HF_ENDPOINT=https://hf-mirror.com
 | `CHUNK_CHILD_SIZE` | 500 | 子chunk大小 |
 | `CHUNK_OVERLAP` | 100 | chunk重叠字符数 |
 | `RRF_K` | 40 | RRF融合常数 (越小越重视高排名) |
-| `RERANK_MIN_SCORE` | 0.5 | Reranker最低相关性阈值 |
+| `RERANK_MIN_SCORE` | 0.05 | Reranker最低相关性阈值 |
 | `RETRIEVER_TOP_K` | 8 | 最终返回chunk数 |
 | `RECALL_MULTIPLIER` | 8 | 召回放大倍数 |
 | `MAX_CONTEXT_TOKENS` | 6000 | 上下文token上限 |
@@ -87,6 +87,29 @@ Query改写扩展模式支持外部JSON文件，通过 `QUERY_PATTERNS_FILE` 指
 cd tests && python test_novatech.py
 ```
 依赖后端运行在 `http://localhost:5000`。
+
+## 自测要求
+
+每次 commit 前必须完成以下检查：
+
+### 1. Backend 代码改动
+```bash
+cd backend && uv run python -c "from src.api.server import app; print('OK')"
+```
+
+### 2. 前端代码改动
+```bash
+cd frontend && npm run build 2>&1 | tail -5
+```
+
+### 3. RAG 相关改动（如涉及检索/生成/LLM）
+必须运行 `tests/test_rag_evaluation_full.py` 验证：
+```bash
+cd backend && uv run python ../tests/test_rag_evaluation_full.py 2>&1 | tail -20
+```
+
+### 4. 配置参数改动
+将参数写入 `backend/.env.example` 作为默认值参考。
 
 ## Git 提交规范
 
