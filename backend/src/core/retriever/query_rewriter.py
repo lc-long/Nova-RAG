@@ -113,13 +113,21 @@ class QueryRewriter:
             ("日志", ["logs", "logging", "日志分析"]),
             ("API", ["api接口", "接口", "endpoint", "rest"]),
             ("用户", ["user", "用户管理", "users", "账户"]),
-            ("权限", ["permission", "权限管理", "access control"]),
+            ("权限", ["permission", "权限管理", "access control", "RBAC"]),
             ("配置", ["config", "settings", "configuration"]),
             ("备份", ["backup", "back up", "数据备份"]),
             ("恢复", ["recovery", "restore", "数据恢复"]),
             ("迁移", ["migration", "迁移", "transfer"]),
             ("集群", ["cluster", "集群", "distributed"]),
             ("容器", ["container", "docker", "容器化"]),
+            ("RTO", ["Recovery Time Objective", "恢复时间目标", "故障恢复时间"]),
+            ("RPO", ["Recovery Point Objective", "恢复点目标", "数据丢失容忍"]),
+            ("Pending", ["等待", "待处理", "挂起"]),
+            ("Pod", ["pod", "容器组", "kubernetes pod"]),
+            ("failover", ["故障切换", "失效转移", "灾难恢复"]),
+            ("API Gateway", ["api网关", "网关", "API gateway"]),
+            ("Developer", ["开发者", "开发人员", "dev"]),
+            ("告警", ["alert", "警报", "报警"]),
         ]
         if not QUERY_PATTERNS_FILE:
             return default
