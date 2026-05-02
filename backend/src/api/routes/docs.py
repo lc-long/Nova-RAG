@@ -310,35 +310,59 @@ async def get_document_image(doc_id: str, image_idx: int, db: Session = Depends(
     if not os.path.exists(image_dir):
         raise HTTPException(status_code=404, detail="Image directory not found")
 
-    try:
-        files = sorted(os.listdir(image_dir))
-        if image_idx < 0 or image_idx >= len(files):
-            raise HTTPException(status_code=404, detail="Image index out of range")
+    image_chunks = request.app.state.components.vector_store.get_image_chunks_by_doc_id(doc_id)
+    if not image_chunks:
+        raise HTTPException(status_code=404, detail="No images found for this document")
 
-        image_path = os.path.join(image_dir, files[image_idx])
-        ext = os.path.splitext(files[image_idx])[1].lower()
+    if image_idx < 0 or image_idx >= len(image_chunks):
+        raise HTTPException(status_code=404, detail="Image index out of range")
 
-        media_type_map = {
-            '.png': 'image/png',
-            '.jpg': 'image/jpeg',
-            '.jpeg': 'image/jpeg',
-            '.gif': 'image/gif',
-            '.webp': 'image/webp',
-        }
-        media_type = media_type_map.get(ext, 'application/octet-stream')
+    image_path = image_chunks[image_idx].get("image_path", "")
+    if not image_path or not os.path.exists(image_path):
+        raise HTTPException(status_code=404, detail="Image file not found")
 
-        return FileResponse(
-            path=image_path,
-            media_type=media_type,
-        )
-    except Exception as e:
-        logger.warning(f"[Docs] Error serving image {doc_id}/{image_idx}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to serve image")
+    ext = os.path.splitext(image_path)[1].lower()
+    media_type_map = {
+        '.png': 'image/png',
+        '.jpg': 'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif': 'image/gif',
+        '.webp': 'image/webp',
+    }
+    media_type = media_type_map.get(ext, 'application/octet-stream')
+
+    return FileResponse(
+        path=image_path,
+        media_type=media_type,
+    )
+
+
+@router.get("/{doc_id}/images")
+async def list_document_images(doc_id: str, db: Session = Depends(get_db)):
+    """List all images for a document."""
+    image_chunks = request.app.state.components.vector_store.get_image_chunks_by_doc_id(doc_id)
+    if not image_chunks:
+        return {"images": []}
+
+    return {
+        "images": [
+            {
+                "idx": i,
+                "page_num": img.get("page_num", 0),
+                "description": img.get("description", ""),
+                "image_path": img.get("image_path", ""),
+            }
+            for i, img in enumerate(image_chunks)
+        ]
+    }
 
 
 @router.delete("/{doc_id}")
 async def delete_document(request: Request, doc_id: str, db: Session = Depends(get_db)):
     """Delete document - mirrors Go's DocsHandler.Delete."""
+    import os
+    from ...core.config import IMAGE_STORAGE_DIR
+
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
         logger.warning(f"[DeleteDoc] Document {doc_id} not found in DB, cleaning up vectors anyway")
@@ -353,5 +377,19 @@ async def delete_document(request: Request, doc_id: str, db: Session = Depends(g
         request.app.state.components.vector_store.delete_by_doc_id(doc_id)
     except Exception as e:
         logger.warning(f"[DeleteDoc] Vector cleanup failed for {doc_id}: {e}")
+
+    try:
+        request.app.state.components.vector_store.delete_image_chunks_by_doc_id(doc_id)
+    except Exception as e:
+        logger.warning(f"[DeleteDoc] Image chunk cleanup failed for {doc_id}: {e}")
+
+    image_dir = os.path.join(IMAGE_STORAGE_DIR, doc_id)
+    if os.path.exists(image_dir):
+        try:
+            import shutil
+            shutil.rmtree(image_dir)
+            logger.info(f"[DeleteDoc] Removed image directory: {image_dir}")
+        except Exception as e:
+            logger.warning(f"[DeleteDoc] Image directory cleanup failed for {doc_id}: {e}")
 
     return {"status": "ok"}

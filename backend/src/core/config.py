@@ -39,3 +39,7 @@ QUERY_PATTERNS_FILE = os.getenv("QUERY_PATTERNS_FILE", "")
 
 # --- Image Storage ---
 IMAGE_STORAGE_DIR = os.getenv("IMAGE_STORAGE_DIR", "uploads/images")
+
+# --- OCR ---
+OCR_MAX_PAGES = int(os.getenv("OCR_MAX_PAGES", "15"))
+OCR_FULL_DOCUMENT = os.getenv("OCR_FULL_DOCUMENT", "false").lower() == "true"

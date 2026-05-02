@@ -268,30 +268,38 @@ async def process_pdf_images(file_path: str, doc_id: str, output_dir: str = None
         # Step 2: No embedded images - use page screenshots
         print("[OCR] No embedded images found, analyzing pages for OCR...")
 
+        from ..config import OCR_MAX_PAGES, OCR_FULL_DOCUMENT
+
         pages_to_ocr = []
-        max_ocr_pages = 15
 
         with pdfplumber.open(file_path) as pdf:
-            for page_num, page in enumerate(pdf.pages, start=1):
-                text = page.extract_text() or ""
+            total_pages = len(pdf.pages)
 
-                if page_num <= 3:
-                    pages_to_ocr.append(page_num)
-                    continue
+            if OCR_FULL_DOCUMENT:
+                pages_to_ocr = list(range(1, total_pages + 1))
+            else:
+                max_ocr_pages = OCR_MAX_PAGES
 
-                visual_indicators = [
-                    len(text.strip()) < 200,
-                    'chart' in text.lower() or '图' in text,
-                    'figure' in text.lower() or 'fig.' in text.lower(),
-                    'diagram' in text.lower() or '架构' in text,
-                    'table' in text.lower() and len(text.strip()) < 500,
-                ]
+                for page_num, page in enumerate(pdf.pages, start=1):
+                    text = page.extract_text() or ""
 
-                if any(visual_indicators):
-                    pages_to_ocr.append(page_num)
+                    if page_num <= 3:
+                        pages_to_ocr.append(page_num)
+                        continue
 
-                if len(pages_to_ocr) >= max_ocr_pages:
-                    break
+                    visual_indicators = [
+                        len(text.strip()) < 200,
+                        'chart' in text.lower() or '图' in text,
+                        'figure' in text.lower() or 'fig.' in text.lower(),
+                        'diagram' in text.lower() or '架构' in text,
+                        'table' in text.lower() and len(text.strip()) < 500,
+                    ]
+
+                    if any(visual_indicators):
+                        pages_to_ocr.append(page_num)
+
+                    if len(pages_to_ocr) >= max_ocr_pages:
+                        break
 
         print(f"[OCR] Selected {len(pages_to_ocr)} pages for screenshot OCR: {pages_to_ocr}")
 
