@@ -85,6 +85,12 @@ Frontend (React + TS) ──SSE──> Backend (Python FastAPI :5000)
 | PDF 预览白屏 | pdfjs-dist Canvas 渲染 |
 | IDM 下载劫持 | XMLHttpRequest + Blob URL |
 | 中文文件名编码 | urllib.parse.quote |
+| 同步阻塞 | 全面异步化 (httpx + asyncio) |
+| Token 估算不准 | 中文 1.5 token/字 + 英文 0.25 token/字符 |
+| OCR 结果错位 | 插入到对应页面 chunk |
+| OCR 无缓存 | 基于文件 MD5 缓存 |
+| 数据库连接池重复 | 统一 engine/session |
+| README 过时 | 更新为当前架构 |
 
 ## 五、待优化问题
 
@@ -92,7 +98,7 @@ Frontend (React + TS) ──SSE──> Backend (Python FastAPI :5000)
 
 | 问题 | 建议 | 状态 |
 |------|------|------|
-| 同步阻塞 | 异步化所有外部 API 调用 | ⏳ 待优化 |
+| 同步阻塞 | 异步化所有外部 API 调用 | ✅ 已完成 |
 | 数据库连接池重复 | 统一 engine/session | ✅ 已完成 |
 | Token 估算不准 | 使用 tiktoken 或调整系数 | ✅ 已完成 |
 
