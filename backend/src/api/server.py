@@ -6,6 +6,8 @@ warnings.filterwarnings("ignore", category=DeprecationWarning, module="pkg_resou
 warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 
 import os
+import logging
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -21,22 +23,31 @@ from .database import Base, engine
 from ..core.storage.vector_store import init_pgvector
 from .routes import docs, chat, conversations
 
-app = FastAPI(title="Nova-RAG Unified Backend")
+logger = logging.getLogger("nova_rag")
+
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Nova-RAG starting up...")
+    init_pgvector()
+    Base.metadata.create_all(bind=engine)
+    app.state.components = create_components()
+    logger.info("Nova-RAG components initialized.")
+    yield
+    logger.info("Nova-RAG shutting down.")
+
+
+app = FastAPI(title="Nova-RAG Unified Backend", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.on_event("startup")
-async def startup():
-    init_pgvector()
-    Base.metadata.create_all(bind=engine)
-    app.state.components = create_components()
 
 
 @app.get("/health")
@@ -51,5 +62,5 @@ app.include_router(conversations.router, prefix="/api/v1")
 
 
 if __name__ == "__main__":
-    print("[Nova-RAG] Starting server on http://0.0.0.0:5000")
+    logger.info("Starting server on http://0.0.0.0:5000")
     uvicorn.run(app, host="0.0.0.0", port=5000)
