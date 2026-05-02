@@ -1,6 +1,7 @@
 """Document management routes."""
 import uuid
-from datetime import datetime
+import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 from urllib.parse import quote
@@ -9,16 +10,27 @@ from fastapi import APIRouter, UploadFile, File, Depends, HTTPException, Backgro
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import cast, Integer
 
-from ..database import get_db
+from ..database import get_db, get_db_session
 from ..models import Document
 from ...core.storage.vector_store import DocumentChunk
+
+logger = logging.getLogger("nova_rag")
 
 router = APIRouter(prefix="/docs", tags=["documents"])
 
 UPLOAD_DIR = Path(__file__).parent.parent.parent.parent / "uploads"
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".csv", ".pptx", ".md", ".txt"}
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+
+
+def _secure_filename(filename: str) -> str:
+    """Sanitize filename: strip path separators and dangerous characters."""
+    name = filename.replace("\\", "/").split("/")[-1]
+    name = "".join(c for c in name if c.isalnum() or c in ".-_ ")
+    return name[:200] if name else "unnamed"
 
 
 @router.post("/upload")
@@ -26,14 +38,24 @@ async def upload_document(
     request: Request,
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
 ):
-    """Handle document upload - mirrors Go's DocsHandler.Upload."""
-    doc_id = str(uuid.uuid4())
-    saved_path = UPLOAD_DIR / f"{doc_id}_{file.filename}"
+    """Handle document upload with size and type validation."""
+    # Validate file extension
+    ext = Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
 
+    # Read with size limit
     content = await file.read()
+    if len(content) > MAX_FILE_SIZE:
+        raise HTTPException(status_code=413, detail=f"File too large (max {MAX_FILE_SIZE // 1024 // 1024}MB)")
+
     size = len(content)
+    doc_id = str(uuid.uuid4())
+    safe_name = _secure_filename(file.filename or "unnamed")
+    saved_path = UPLOAD_DIR / f"{doc_id}_{safe_name}"
+
     with open(saved_path, "wb") as f:
         f.write(content)
 
@@ -42,61 +64,70 @@ async def upload_document(
         name=file.filename,
         size=size,
         status="processing",
-        created_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc),
     )
     db.add(doc)
     db.commit()
 
-    background_tasks.add_task(run_ingestion, request.app.state.components, doc_id, file.filename, str(saved_path))
+    if background_tasks is not None:
+        background_tasks.add_task(run_ingestion, request.app.state.components, doc_id, file.filename, str(saved_path))
 
     return {
         "id": doc_id,
         "name": file.filename,
         "size": size,
-        "status": "processing"
+        "status": "processing",
     }
 
 
 def run_ingestion(components, doc_id: str, filename: str, file_path: str):
-    """Background ingestion task with optional OCR for images.
-
-    Note: Uses asyncio.run() for async OCR calls within sync context.
-    """
+    """Background ingestion task with OCR for PDF images."""
     import asyncio
-    from ...core.chunker.pdf_parser import extract_text_from_pdf, extract_text_from_pdf_with_pages, merge_ocr_into_text
+    from ...core.chunker.pdf_parser import extract_text_from_pdf_with_pages, merge_ocr_into_text
     from ...core.chunker.docx_parser import extract_text_from_docx
     from ...core.chunker.excel_parser import extract_text_from_excel
     from ...core.chunker.csv_parser import extract_text_from_csv
     from ...core.chunker.ppt_parser import extract_text_from_pptx
     from ...core.ocr import process_pdf_images
 
+    db = get_db_session()
     try:
-        if filename.endswith(".pdf"):
-            # Extract page-by-page text
+        ext = Path(filename).suffix.lower()
+
+        if ext == ".pdf":
             pages = extract_text_from_pdf_with_pages(file_path)
             text = "\n\n".join(t for _, t in pages if t.strip())
-                
-        elif filename.endswith(".docx"):
+
+            # OCR: extract image descriptions from PDF and merge into text
+            try:
+                ocr_results = asyncio.run(process_pdf_images(file_path, doc_id))
+                if ocr_results:
+                    text = merge_ocr_into_text(pages, ocr_results)
+                    logger.info(f"[OCR] Merged {len(ocr_results)} image descriptions into text")
+            except Exception as e:
+                logger.warning(f"[OCR] Failed for {filename}: {e}")
+        elif ext == ".docx":
             text = extract_text_from_docx(file_path)
-        elif filename.endswith(".xlsx"):
+        elif ext == ".xlsx":
             text = extract_text_from_excel(file_path)
-        elif filename.endswith(".csv"):
+        elif ext == ".csv":
             text = extract_text_from_csv(file_path)
-        elif filename.endswith(".pptx"):
+        elif ext == ".pptx":
             text = extract_text_from_pptx(file_path)
-        elif filename.endswith(".md") or filename.endswith(".txt"):
+        elif ext in (".md", ".txt"):
             with open(file_path, "r", encoding="utf-8") as f:
                 text = f.read()
         else:
-            print(f"[DocsUpload] Unsupported file type: {filename}")
+            logger.warning(f"[DocsUpload] Unsupported file type: {filename}")
             return
 
-        if filename.endswith(".md"):
+        if ext == ".md":
             chunks = components.chunker.chunk_markdown(text, doc_id)
         else:
             chunks = components.chunker.chunk(text, doc_id)
 
-        prefix = f"[来源文件：{filename}]\n"
+        safe_name = _secure_filename(filename)
+        prefix = f"[来源文件：{safe_name}]\n"
         for chunk in chunks:
             chunk.content = prefix + chunk.content
 
@@ -104,26 +135,23 @@ def run_ingestion(components, doc_id: str, filename: str, file_path: str):
         components.vector_store.add_chunks(chunks, embeddings, source=filename)
         components.bm25_indexer.add_chunks(chunks)
 
-        # Update status
-        session = next(get_db())
-        doc = session.query(Document).filter(Document.id == doc_id).first()
+        doc = db.query(Document).filter(Document.id == doc_id).first()
         if doc:
             doc.status = "ready"
-            session.commit()
-        session.close()
-        print(f"[DocsUpload] Ingestion completed for {filename}")
+            db.commit()
+        logger.info(f"[DocsUpload] Ingestion completed for {filename}")
 
     except Exception as e:
-        print(f"[DocsUpload] Ingestion failed for {filename}: {e}")
+        logger.exception(f"[DocsUpload] Ingestion failed for {filename}: {e}")
         try:
-            session = next(get_db())
-            doc = session.query(Document).filter(Document.id == doc_id).first()
+            doc = db.query(Document).filter(Document.id == doc_id).first()
             if doc:
                 doc.status = "failed"
-                session.commit()
-            session.close()
+                db.commit()
         except Exception:
-            pass
+            logger.exception(f"[DocsUpload] Failed to update status for {doc_id}")
+    finally:
+        db.close()
 
 
 @router.get("")
@@ -150,7 +178,7 @@ async def batch_delete_documents(request: Request, body: BatchDeleteRequest, db:
         try:
             request.app.state.components.vector_store.delete_by_doc_id(doc_id)
         except Exception as e:
-            print(f"[BatchDelete] Vector cleanup failed for {doc_id}: {e}")
+            logger.warning(f"[BatchDelete] Vector cleanup failed for {doc_id}: {e}")
         deleted += 1
     db.commit()
     return {"status": "ok", "deleted": deleted}
@@ -163,30 +191,23 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    from ..database import SessionLocal
-    session = SessionLocal()
-    try:
-        chunks = session.query(DocumentChunk).filter(
-            DocumentChunk.doc_id == doc_id
-        ).all()
+    chunks = db.query(DocumentChunk).filter(
+        DocumentChunk.doc_id == doc_id
+    ).all()
 
-        # Sort by order in metadata
-        def sort_key(c):
-            meta = c.metadata_ or {}
-            return meta.get("order", 0)
-        chunks.sort(key=sort_key)
+    def sort_key(c):
+        meta = c.metadata_ or {}
+        return meta.get("order", 0)
+    chunks.sort(key=sort_key)
 
-        # Strip source prefix from each chunk
-        full_text = ""
-        for c in chunks:
-            text = c.content
-            if text.startswith("[来源文件："):
-                idx = text.find("]\n")
-                if idx != -1:
-                    text = text[idx + 2:]
-            full_text += text + "\n\n"
-    finally:
-        session.close()
+    full_text = ""
+    for c in chunks:
+        text = c.content
+        if text.startswith("[来源文件："):
+            idx = text.find("]\n")
+            if idx != -1:
+                text = text[idx + 2:]
+        full_text += text + "\n\n"
 
     return {
         "doc_id": doc_id,
@@ -257,7 +278,7 @@ async def delete_document(request: Request, doc_id: str, db: Session = Depends(g
     """Delete document - mirrors Go's DocsHandler.Delete."""
     doc = db.query(Document).filter(Document.id == doc_id).first()
     if not doc:
-        print(f"[DeleteDoc] Warning: Document {doc_id} not found in DB, cleaning up vectors anyway")
+        logger.warning(f"[DeleteDoc] Document {doc_id} not found in DB, cleaning up vectors anyway")
     else:
         db.delete(doc)
         db.commit()
@@ -268,6 +289,6 @@ async def delete_document(request: Request, doc_id: str, db: Session = Depends(g
     try:
         request.app.state.components.vector_store.delete_by_doc_id(doc_id)
     except Exception as e:
-        print(f"[DeleteDoc] Warning: Vector cleanup failed for {doc_id}: {e}")
+        logger.warning(f"[DeleteDoc] Vector cleanup failed for {doc_id}: {e}")
 
     return {"status": "ok"}
