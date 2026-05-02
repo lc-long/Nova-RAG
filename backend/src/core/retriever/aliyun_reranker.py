@@ -1,19 +1,22 @@
 """Aliyun DashScope async reranker implementation."""
 import os
+import logging
 from typing import Optional
 
 import httpx
+
+logger = logging.getLogger("nova_rag")
+
+from ..config import RERANK_MODEL, RERANK_MIN_SCORE
 
 
 class AliyunReranker:
     """Async reranker using Aliyun DashScope gte-rerank model."""
 
-    # Minimum relevance score threshold
-    MIN_RELEVANCE_SCORE = 0.3
-
-    def __init__(self, api_key: Optional[str] = None, model: str = "gte-rerank"):
+    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.getenv("ALIYUN_API_KEY", "")
-        self.model = model
+        self.model = model or RERANK_MODEL
+        self.min_relevance_score = RERANK_MIN_SCORE
         self.api_url = "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
         self._client: Optional[httpx.AsyncClient] = None
 
@@ -64,7 +67,7 @@ class AliyunReranker:
                 score = item["relevance_score"]
 
                 # Filter out low-relevance results
-                if score < self.MIN_RELEVANCE_SCORE:
+                if score < self.min_relevance_score:
                     continue
 
                 r_copy = dict(candidates[idx])
@@ -77,7 +80,7 @@ class AliyunReranker:
             return reranked[:top_k]
 
         except Exception as e:
-            print(f"[Reranker] DashScope rerank failed, falling back to original order: {e}")
+            logger.warning(f"[Reranker] DashScope rerank failed, falling back to original order: {e}")
             return candidates[:top_k]
 
     async def close(self):

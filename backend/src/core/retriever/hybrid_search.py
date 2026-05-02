@@ -3,20 +3,22 @@
 Uses Reciprocal Rank Fusion (RRF) to merge results from both engines.
 Supports multi-query expansion via QueryRewriter to bridge vocabulary gaps.
 Vector and BM25 searches run in parallel via asyncio.gather().
+Includes Self-Query for metadata-aware retrieval.
 """
 import asyncio
+import logging
 import re
 from typing import Optional
 
 from .bm25_index import BM25Indexer, _normalize_text
 from .query_rewriter import QueryRewriter
 from .aliyun_reranker import AliyunReranker
+from .self_query import SelfQueryRetriever, MetadataFilter
+from ..config import (
+    RECALL_MULTIPLIER, RETRIEVER_TOP_K, RRF_K, MISSING_RANK, DISTANCE_THRESHOLD,
+)
 
-# Scale-up constants: initial recall pool before RRF fusion
-_RECALL_MULTIPLIER = 8   # top_k * 8 → larger initial recall pool
-_OUTPUT_TOP_K = 8        # RRF fusion output (more candidates for reranker)
-_RRF_K = 60              # RRF constant
-_MISSING_RANK = 1000     # Large rank assigned to chunks appearing in only one channel
+logger = logging.getLogger("nova_rag")
 
 
 class HybridRetriever:
@@ -27,8 +29,8 @@ class HybridRetriever:
         vector_store,
         embedder,
         bm25_indexer: Optional[BM25Indexer] = None,
-        distance_threshold: float = 10.0,
-        rrf_k: int = _RRF_K,
+        distance_threshold: float = DISTANCE_THRESHOLD,
+        rrf_k: int = RRF_K,
         rewriter: Optional[QueryRewriter] = None,
     ):
         self.vector_store = vector_store
@@ -38,48 +40,92 @@ class HybridRetriever:
         self.rrf_k = rrf_k
         self.rewriter = rewriter or QueryRewriter()
         self.reranker = AliyunReranker()
+        self.self_query = SelfQueryRetriever()
 
     async def retrieve(self, query: str, top_k: int = 5, doc_id: Optional[str] = None) -> list[dict]:
-        """Async hybrid search: multi-query expanded vector + BM25 with RRF fusion.
+        """Async hybrid search with self-query, multi-query expansion, and RRF fusion."""
+        # Step 1: Self-Query - parse user intent and metadata filters
+        sq_result = await self.self_query.parse_query(query)
+        semantic_query = sq_result.semantic_query
+        filters = sq_result.filters
 
-        Vector and BM25 searches run in parallel for reduced latency.
-        """
-        # Rewrite query into multiple variants to bridge vocabulary gap
-        rewritten_queries = await self.rewriter.rewrite_with_fallback(query)
+        # Step 2: Query expansion on the semantic query
+        rewritten_queries = await self.rewriter.rewrite_with_fallback(semantic_query)
         if len(rewritten_queries) > 10:
             rewritten_queries = rewritten_queries[:10]
 
-        # Internal scaling: always use expanded pool regardless of caller top_k
-        recall_k = max(top_k * _RECALL_MULTIPLIER, _OUTPUT_TOP_K)
+        recall_k = max(top_k * RECALL_MULTIPLIER, RETRIEVER_TOP_K)
 
-        # --- Vector (dense) retrieval across all query variants ---
-        file_match = re.search(r'([^\s/\\]+\.(?:pdf|docx))', query, re.IGNORECASE)
+        # Step 3: Determine search scope (metadata filter or doc_id)
+        effective_doc_id = doc_id
+        if not effective_doc_id and filters.doc_name_pattern:
+            # Try to find matching document by name pattern
+            effective_doc_id = self._find_doc_by_name(filters.doc_name_pattern)
+
+        # Step 4: Vector + BM25 retrieval
+        file_match = re.search(r'([^\s/\\]+\.(?:pdf|docx))', semantic_query, re.IGNORECASE)
 
         if file_match:
             filename_hint = file_match.group(1).lower()
-            dense_task = self._metadata_search(filename_hint, recall_k, doc_id)
+            dense_task = self._metadata_search(filename_hint, recall_k, effective_doc_id)
         else:
-            dense_task = self._multi_query_vector_search(rewritten_queries, recall_k, doc_id)
+            dense_task = self._multi_query_vector_search(rewritten_queries, recall_k, effective_doc_id)
 
-        # --- BM25 (sparse) retrieval across all query variants ---
-        sparse_task = self._multi_query_bm25_search(rewritten_queries, recall_k, doc_id)
+        sparse_task = self._multi_query_bm25_search(rewritten_queries, recall_k, effective_doc_id)
 
-        # --- Run vector and BM25 in parallel ---
         dense_results, sparse_results = await asyncio.gather(dense_task, sparse_task)
 
-        # --- RRF Fusion (rank-based, not score-based) ---
-        fused = self._rrf_fuse(dense_results, sparse_results, _OUTPUT_TOP_K)
+        # Step 5: RRF Fusion
+        fused = self._rrf_fuse(dense_results, sparse_results, RETRIEVER_TOP_K)
 
-        # --- Cross-Encoder reranking: refine with deep semantic scoring ---
-        reranked = await self.reranker.rerank(query, fused, top_k=_OUTPUT_TOP_K)
+        # Step 6: Apply page range filter if specified
+        if filters.page_range:
+            fused = self._filter_by_page_range(fused, filters.page_range)
+
+        # Step 7: Rerank
+        reranked = await self.reranker.rerank(semantic_query, fused, top_k=RETRIEVER_TOP_K)
         return reranked
+
+    def _find_doc_by_name(self, pattern: str) -> Optional[str]:
+        """Find document ID by name pattern (case-insensitive substring match)."""
+        try:
+            from ...api.database import SessionLocal
+            from ...api.models import Document as DocModel
+
+            session = SessionLocal()
+            try:
+                docs = session.query(DocModel).all()
+                pattern_lower = pattern.lower()
+                for doc in docs:
+                    if pattern_lower in doc.name.lower():
+                        logger.info(f"[SelfQuery] Matched doc '{doc.name}' for pattern '{pattern}'")
+                        return doc.id
+                logger.info(f"[SelfQuery] No doc matched pattern '{pattern}'")
+                return None
+            finally:
+                session.close()
+        except Exception as e:
+            logger.warning(f"[SelfQuery] Doc lookup failed: {e}")
+            return None
+
+    def _filter_by_page_range(self, chunks: list[dict], page_range: tuple[int, int]) -> list[dict]:
+        """Filter chunks by page number range."""
+        start_page, end_page = page_range
+        filtered = []
+        for chunk in chunks:
+            page = chunk.get("page_number", 0)
+            if page == 0 or (start_page <= page <= end_page):
+                filtered.append(chunk)
+        if filtered:
+            logger.info(f"[SelfQuery] Page filter {page_range}: {len(chunks)} → {len(filtered)} chunks")
+            return filtered
+        return chunks  # If all filtered out, return original
 
     async def retrieve_multi_docs(self, query: str, top_k: int = 5, doc_ids: list[str] = None) -> list[dict]:
         """Async hybrid search scoped to multiple doc_ids. Merges and deduplicates results."""
         if not doc_ids:
             return await self.retrieve(query, top_k)
 
-        # Run all doc retrievals in parallel
         tasks = [self.retrieve(query, top_k, doc_id=did) for did in doc_ids]
         all_doc_results = await asyncio.gather(*tasks)
 
@@ -93,9 +139,8 @@ class HybridRetriever:
                     seen_keys.add(key)
                     all_results.append(r)
 
-        # Re-sort by rerank_score if available, else keep order
         all_results.sort(key=lambda r: r.get("rerank_score", 0), reverse=True)
-        return all_results[:_OUTPUT_TOP_K]
+        return all_results[:RETRIEVER_TOP_K]
 
     async def _multi_query_vector_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
         """Run vector search across multiple query variants, merge results."""
@@ -103,7 +148,6 @@ class HybridRetriever:
 
         for q in queries:
             normalized_q = _normalize_text(q)
-            # Wrap sync embedder call in thread pool
             query_embedding = await asyncio.to_thread(self.embedder.embed, [normalized_q])
             query_embedding = query_embedding[0]
             results = await self._vector_search(query_embedding, top_k, doc_id)
@@ -120,15 +164,10 @@ class HybridRetriever:
         return list(chunk_best.values())
 
     async def _multi_query_bm25_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
-        """Run BM25 search across multiple query variants, merge by best score.
-
-        If doc_id is provided, search only that document's chunks.
-        Returns list of dicts compatible with RRF fusion.
-        """
+        """Run BM25 search across multiple query variants, merge by best score."""
         chunk_best_score: dict[str, float] = {}
 
         for q in queries:
-            # BM25 search is CPU-bound, run in thread pool
             results = await asyncio.to_thread(self.bm25_indexer.search, q, top_k=top_k, doc_id=doc_id)
             for chunk_id, score in results:
                 if chunk_id not in chunk_best_score or score > chunk_best_score[chunk_id]:
@@ -136,7 +175,6 @@ class HybridRetriever:
 
         sorted_results = sorted(chunk_best_score.items(), key=lambda x: x[1], reverse=True)
 
-        # Convert to dict format for RRF fusion
         sparse_results = []
         for chunk_id, bm25_score in sorted_results[:top_k]:
             content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
@@ -159,14 +197,7 @@ class HybridRetriever:
         sparse_results: list[dict],
         top_k: int
     ) -> list[dict]:
-        """Reciprocal Rank Fusion using rank-based scoring (NOT distance/score).
-
-        Correct RRF formula: score = 1/(k+rank)
-        - Dense: sort by distance ASC, assign rank 1, 2, 3...
-        - Sparse: sort by BM25 score DESC, assign rank 1, 2, 3...
-        - Chunks in only one channel get rank=_MISSING_RANK for the other channel
-        """
-        # --- Build dense rank map (distance ASC -> rank) ---
+        """Reciprocal Rank Fusion using rank-based scoring."""
         sorted_dense = sorted(dense_results, key=lambda r: r.get("distance", float("inf")))
         dense_rank: dict[str, int] = {}
         for rank, result in enumerate(sorted_dense, start=1):
@@ -174,7 +205,6 @@ class HybridRetriever:
             if key:
                 dense_rank[key] = rank
 
-        # --- Build sparse rank map (BM25 score DESC -> rank) ---
         sorted_sparse = sorted(sparse_results, key=lambda r: r.get("bm25_score", 0), reverse=True)
         sparse_rank: dict[str, int] = {}
         for rank, result in enumerate(sorted_sparse, start=1):
@@ -182,17 +212,14 @@ class HybridRetriever:
             if key:
                 sparse_rank[key] = rank
 
-        # --- Collect all unique chunk keys ---
         all_keys = set(dense_rank.keys()) | set(sparse_rank.keys())
 
-        # --- Compute RRF scores using rank-based formula ---
         rrf_scores: dict[str, float] = {}
         for key in all_keys:
-            d_rank = dense_rank.get(key, _MISSING_RANK)
-            s_rank = sparse_rank.get(key, _MISSING_RANK)
+            d_rank = dense_rank.get(key, MISSING_RANK)
+            s_rank = sparse_rank.get(key, MISSING_RANK)
             rrf_scores[key] = (1.0 / (self.rrf_k + d_rank)) + (1.0 / (self.rrf_k + s_rank))
 
-        # Build result map with all metadata
         all_results: dict[str, dict] = {}
         for r in dense_results:
             key = r.get("child_id") or r.get("parent_id")
@@ -204,7 +231,6 @@ class HybridRetriever:
                 if key not in all_results:
                     all_results[key] = r
 
-        # Sort by RRF score descending
         sorted_keys = sorted(rrf_scores, key=lambda k: rrf_scores[k], reverse=True)
 
         chunks = []
@@ -232,137 +258,146 @@ class HybridRetriever:
 
         return chunks
 
-    async def _vector_search(self, query_embedding: list[float], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
-        """Async pgvector search with parent-child assembly, optionally filtered by doc_id."""
-        # Wrap synchronous DB query in thread pool
-        results = await asyncio.to_thread(self.vector_store.query, query_embedding, top_k, doc_id=doc_id)
+    def _assemble_chunk(self, chunk_id: str, metadata: dict, text: str, distance: float) -> dict:
+        """Assemble a single chunk result dict from vector search data."""
+        if metadata["chunk_type"] == "child":
+            return {
+                "_type": "child",
+                "child_id": chunk_id,
+                "child_content": text,
+                "parent_id": metadata["parent_id"],
+                "doc_id": metadata["doc_id"],
+                "page_number": metadata.get("page_number", 0),
+                "distance": distance,
+            }
+        else:
+            return {
+                "_type": "parent",
+                "parent_id": chunk_id,
+                "parent_content": text,
+                "doc_id": metadata["doc_id"],
+                "page_number": metadata.get("page_number", 0),
+                "distance": distance,
+            }
 
-        chunks = []
+    async def _resolve_parent_content(self, chunks: list[dict]) -> list[dict]:
+        """Resolve parent content for child chunks, filter duplicates."""
         seen_parent_ids = set()
         seen_texts = set()
+        resolved = []
 
-        for i in range(len(results["ids"][0])):
-            chunk_id = results["ids"][0][i]
-            metadata = results["metadatas"][0][i]
-            distance = results["distances"][0][i]
-
-            if distance > self.distance_threshold:
-                continue
-
-            text = results["documents"][0][i]
+        for r in chunks:
+            text = r.get("child_content") or r.get("parent_content", "")
             norm_text = text.replace("\n", " ").strip()
             if norm_text in seen_texts:
                 continue
             seen_texts.add(norm_text)
 
-            if metadata["chunk_type"] == "child":
-                parent_id = metadata["parent_id"]
+            if r["_type"] == "child":
+                parent_id = r["parent_id"]
                 if parent_id in seen_parent_ids:
                     continue
                 seen_parent_ids.add(parent_id)
-                # Wrap sync DB call in thread pool
                 parent_results = await asyncio.to_thread(self.vector_store.get_by_parent, parent_id)
                 if parent_results["documents"]:
-                    chunks.append({
-                        "child_id": chunk_id,
-                        "child_content": text,
+                    resolved.append({
+                        "child_id": r["child_id"],
+                        "child_content": r["child_content"],
                         "parent_content": parent_results["documents"][0],
                         "parent_id": parent_id,
-                        "doc_id": metadata["doc_id"],
-                        "page_number": metadata.get("page_number", 0),
-                        "distance": distance
+                        "doc_id": r["doc_id"],
+                        "page_number": r["page_number"],
+                        "distance": r["distance"],
                     })
             else:
-                chunks.append({
-                    "parent_id": chunk_id,
-                    "parent_content": text,
-                    "doc_id": metadata["doc_id"],
-                    "page_number": metadata.get("page_number", 0),
-                    "distance": distance
+                resolved.append({
+                    "parent_id": r["parent_id"],
+                    "parent_content": r["parent_content"],
+                    "doc_id": r["doc_id"],
+                    "page_number": r["page_number"],
+                    "distance": r["distance"],
                 })
 
+        return resolved
+
+    async def _vector_search(self, query_embedding: list[float], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
+        """Async pgvector search with parent-child assembly."""
+        results = await asyncio.to_thread(self.vector_store.query, query_embedding, top_k, doc_id=doc_id)
+
+        raw_chunks = []
+        for i in range(len(results["ids"][0])):
+            chunk_id = results["ids"][0][i]
+            metadata = results["metadatas"][0][i]
+            distance = results["distances"][0][i]
+            if distance > self.distance_threshold:
+                continue
+            text = results["documents"][0][i]
+            raw_chunks.append(self._assemble_chunk(chunk_id, metadata, text, distance))
+
+        chunks = await self._resolve_parent_content(raw_chunks)
+
         if not chunks:
-            # Relaxed search without doc_id filter
             results_relaxed = await asyncio.to_thread(self.vector_store.query, query_embedding, top_k)
+            raw_chunks_relaxed = []
             for i in range(len(results_relaxed["ids"][0])):
+                chunk_id = results_relaxed["ids"][0][i]
                 metadata = results_relaxed["metadatas"][0][i]
                 distance = results_relaxed["distances"][0][i]
                 text = results_relaxed["documents"][0][i]
-                norm_text = text.replace("\n", " ").strip()
-                if norm_text in seen_texts:
-                    continue
-                seen_texts.add(norm_text)
-
-                if metadata["chunk_type"] == "child":
-                    parent_id = metadata["parent_id"]
-                    if parent_id in seen_parent_ids:
-                        continue
-                    seen_parent_ids.add(parent_id)
-                    parent_results = await asyncio.to_thread(self.vector_store.get_by_parent, parent_id)
-                    if parent_results["documents"]:
-                        chunks.append({
-                            "child_id": results_relaxed["ids"][0][i],
-                            "child_content": text,
-                            "parent_content": parent_results["documents"][0],
-                            "parent_id": parent_id,
-                            "doc_id": metadata["doc_id"],
-                            "page_number": metadata.get("page_number", 0),
-                            "distance": distance
-                        })
-                else:
-                    chunks.append({
-                        "parent_id": results_relaxed["ids"][0][i],
-                        "parent_content": text,
-                        "doc_id": metadata["doc_id"],
-                        "page_number": metadata.get("page_number", 0),
-                        "distance": distance
-                    })
+                raw_chunks_relaxed.append(self._assemble_chunk(chunk_id, metadata, text, distance))
+            chunks = await self._resolve_parent_content(raw_chunks_relaxed)
 
         return chunks
 
     async def _metadata_search(self, filename_hint: str, top_k: int, doc_id: Optional[str] = None) -> list[dict]:
-        """Search by source metadata containing filename hint, optionally scoped to a doc_id."""
+        """Search by source metadata containing filename hint using PostgreSQL."""
         try:
-            # Wrap sync DB call in thread pool
-            def _do_metadata_search():
-                where_filter = {"source": {"$contains": filename_hint}}
-                if doc_id:
-                    where_filter["doc_id"] = doc_id
-                return self.vector_store.collection.get(
-                    where=where_filter,
-                    include=["documents", "metadatas", "distances"]
-                )
+            from ..storage.vector_store import DocumentChunk
+            from ...api.database import SessionLocal
 
-            all_data = await asyncio.to_thread(_do_metadata_search)
+            def _do_metadata_search():
+                session = SessionLocal()
+                try:
+                    q = session.query(DocumentChunk).filter(
+                        DocumentChunk.metadata_["source"].astext.ilike(f"%{filename_hint}%")
+                    )
+                    if doc_id:
+                        q = q.filter(DocumentChunk.doc_id == doc_id)
+                    return q.limit(top_k).all()
+                finally:
+                    session.close()
+
+            rows = await asyncio.to_thread(_do_metadata_search)
 
             results = []
             seen_parent_ids = set()
-            for i in range(len(all_data["ids"])):
-                metadata = all_data["metadatas"][i]
-                if metadata["chunk_type"] == "child":
-                    parent_id = metadata["parent_id"]
+            for row in rows:
+                meta = row.metadata_ or {}
+                if meta.get("chunk_type") == "child":
+                    parent_id = meta.get("parent_id")
                     if parent_id in seen_parent_ids:
                         continue
                     seen_parent_ids.add(parent_id)
                     parent_results = await asyncio.to_thread(self.vector_store.get_by_parent, parent_id)
                     if parent_results["documents"]:
                         results.append({
-                            "child_id": all_data["ids"][i],
-                            "child_content": all_data["documents"][i],
+                            "child_id": row.id,
+                            "child_content": row.content,
                             "parent_content": parent_results["documents"][0],
                             "parent_id": parent_id,
-                            "doc_id": metadata["doc_id"],
-                            "page_number": metadata.get("page_number", 0),
-                            "distance": 0.0
+                            "doc_id": row.doc_id,
+                            "page_number": meta.get("page_number", 0),
+                            "distance": 0.0,
                         })
                 else:
                     results.append({
-                        "parent_id": all_data["ids"][i],
-                        "parent_content": all_data["documents"][i],
-                        "doc_id": metadata["doc_id"],
-                        "page_number": metadata.get("page_number", 0),
-                        "distance": 0.0
+                        "parent_id": row.id,
+                        "parent_content": row.content,
+                        "doc_id": row.doc_id,
+                        "page_number": meta.get("page_number", 0),
+                        "distance": 0.0,
                     })
             return results[:top_k]
-        except Exception:
+        except Exception as e:
+            logger.warning(f"[HybridRetriever] Metadata search failed: {e}")
             return []

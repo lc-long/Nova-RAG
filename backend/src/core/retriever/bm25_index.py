@@ -2,12 +2,16 @@
 
 Maintains an in-memory BM25 index per document, built at ingest time
 and queried during retrieval for keyword matching.
+Uses JSON for persistence (no pickle security risk).
 """
+import json
 import re
+import logging
 import jieba
-import pickle
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger("nova_rag")
 
 
 def _normalize_text(text: str) -> str:
@@ -27,33 +31,53 @@ class BM25Indexer:
     def __init__(self, persist_directory: str = "./vector_db"):
         self.persist_dir = Path(persist_directory)
         self.persist_dir.mkdir(parents=True, exist_ok=True)
-        self.index_file = self.persist_dir / "bm25_index.pkl"
-        # doc_id -> {"chunk_ids": [...], "corpus": [[tokenized sentences]], "bm25": BM25}
+        self.index_file = self.persist_dir / "bm25_index.json"
+        # doc_id -> {"chunk_ids": [...], "tokenized_corpus": [[tokens]], "bm25": BM25}
         self.doc_indexes: dict = {}
         self.chunk_id_to_doc: dict = {}  # chunk_id -> doc_id
         self.chunk_id_to_content: dict = {}  # chunk_id -> content (original, not normalized)
         self._load()
 
     def _load(self):
-        """Load existing index from disk."""
+        """Load existing index from disk (JSON format)."""
         if self.index_file.exists():
             try:
-                with open(self.index_file, "rb") as f:
-                    data = pickle.load(f)
-                    self.doc_indexes = data.get("doc_indexes", {})
+                with open(self.index_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
                     self.chunk_id_to_doc = data.get("chunk_id_to_doc", {})
                     self.chunk_id_to_content = data.get("chunk_id_to_content", {})
-            except Exception:
-                pass
+                    # Rebuild BM25 models from stored tokenized corpus
+                    from rank_bm25 import BM25Okapi
+                    for doc_id, idx_data in data.get("doc_indexes", {}).items():
+                        tokenized_corpus = idx_data.get("tokenized_corpus", [])
+                        chunk_ids = idx_data.get("chunk_ids", [])
+                        if tokenized_corpus and chunk_ids:
+                            bm25 = BM25Okapi(tokenized_corpus)
+                            self.doc_indexes[doc_id] = {
+                                "chunk_ids": chunk_ids,
+                                "tokenized_corpus": tokenized_corpus,
+                                "bm25": bm25,
+                            }
+                logger.info(f"[BM25] Loaded index with {len(self.chunk_id_to_doc)} chunks")
+            except Exception as e:
+                logger.warning(f"[BM25] Failed to load index: {e}")
 
     def _save(self):
-        """Persist index to disk."""
-        with open(self.index_file, "wb") as f:
-            pickle.dump({
-                "doc_indexes": self.doc_indexes,
+        """Persist index to disk (JSON format, no pickle)."""
+        # Serialize doc_indexes without BM25 model objects
+        serializable = {}
+        for doc_id, idx_data in self.doc_indexes.items():
+            serializable[doc_id] = {
+                "chunk_ids": idx_data["chunk_ids"],
+                "tokenized_corpus": idx_data["tokenized_corpus"],
+            }
+
+        with open(self.index_file, "w", encoding="utf-8") as f:
+            json.dump({
+                "doc_indexes": serializable,
                 "chunk_id_to_doc": self.chunk_id_to_doc,
                 "chunk_id_to_content": self.chunk_id_to_content,
-            }, f)
+            }, f, ensure_ascii=False)
 
     def add_chunks(self, chunks: list):
         """Build or update BM25 index for a set of chunks (one document)."""
@@ -63,7 +87,6 @@ class BM25Indexer:
         doc_id = chunks[0].doc_id
         chunk_ids = [c.chunk_id for c in chunks]
 
-        # Normalize content before tokenizing to eliminate spacing mismatches
         normalized_corpus = [_normalize_text(c.content) for c in chunks]
         tokenized_corpus = [list(jieba.cut(doc)) for doc in normalized_corpus]
 
@@ -83,10 +106,7 @@ class BM25Indexer:
         self._save()
 
     def search(self, query: str, top_k: int = 10, doc_id: Optional[str] = None) -> list[tuple[str, float]]:
-        """Search BM25 index, return [(chunk_id, score)] sorted by score descending.
-
-        If doc_id is provided, search only that document's chunks.
-        """
+        """Search BM25 index, return [(chunk_id, score)] sorted by score descending."""
         normalized_query = _normalize_text(query)
         query_tokens = list(jieba.cut(normalized_query))
         all_results: dict[str, float] = {}
