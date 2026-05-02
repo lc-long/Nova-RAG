@@ -1,8 +1,0 @@
-# Git Commit Rules
-
-## Commit Discipline
-- Every small feature block (e.g., migrating an API, modifying a directory) must be immediately `git add` and `git commit`
-- Never combine thousands of lines of code into a single commit
-- Commit message format: `type(scope): description`
-- type options: feat/fix/refactor/build/chore/docs/test
-- All git commit messages MUST be written strictly in English, following the Conventional Commits standard. NEVER use Chinese in commit messages.
