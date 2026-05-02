@@ -13,6 +13,7 @@ from typing import Optional
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from .md_splitter import split_markdown, MarkdownSection
+from ..config import CHUNK_PARENT_SIZE, CHUNK_CHILD_SIZE, CHUNK_OVERLAP
 
 
 _TABLE_SENTINEL = "\x00TBL\x00"
@@ -193,9 +194,9 @@ class ParentChildChunker:
 
     def __init__(
         self,
-        parent_chunk_size: int = 2000,
-        child_chunk_size: int = 500,
-        overlap: int = 50
+        parent_chunk_size: int = CHUNK_PARENT_SIZE,
+        child_chunk_size: int = CHUNK_CHILD_SIZE,
+        overlap: int = CHUNK_OVERLAP
     ):
         self.parent_chunk_size = parent_chunk_size
         self.child_chunk_size = child_chunk_size
@@ -229,6 +230,8 @@ class ParentChildChunker:
         acc_size = 0
         unit_count = 0
 
+        # Protect paragraph breaks so they survive table pre-splitting
+        pre = pre.replace("\n\n", "\x00P\x00")
         # Split on protected paragraph breaks
         units = pre.split("\x00P\x00")
 

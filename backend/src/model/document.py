@@ -1,18 +1,5 @@
-from dataclasses import dataclass
-from typing import Optional
+"""Data models for Nova-RAG document processing.
 
-
-@dataclass
-class Chunk:
-    chunk_id: str
-    content: str
-    doc_id: str
-    parent_id: Optional[str] = None
-    page_number: Optional[int] = None
-
-
-@dataclass
-class ParentDoc:
-    doc_id: str
-    content: str
-    name: str
+The Chunk dataclass is defined in core/chunker/parent_child.py
+and is the canonical version used throughout the codebase.
+"""

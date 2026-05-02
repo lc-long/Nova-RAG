@@ -1,5 +1,8 @@
 """Global shared components initialized at startup."""
+import logging
 from dataclasses import dataclass
+
+logger = logging.getLogger("nova_rag")
 
 from ..core.storage.vector_store import VectorStore
 from ..core.embedder.aliyun_embedder import AliyunEmbedder
@@ -21,14 +24,14 @@ class Components:
 
 def create_components() -> Components:
     """Initialize and return all shared components. Called once at startup."""
-    print("[Nova-RAG] Initializing components...")
+    logger.info("[Nova-RAG] Initializing components...")
     vector_store = VectorStore()
     embedder = AliyunEmbedder()
     bm25_indexer = BM25Indexer(persist_directory="./vector_db")
     retriever = HybridRetriever(vector_store, embedder, bm25_indexer)
     chunker = ParentChildChunker()
     llm_client = MinimaxClient()
-    print("[Nova-RAG] All components ready!")
+    logger.info("[Nova-RAG] All components ready!")
     return Components(
         vector_store=vector_store,
         embedder=embedder,

@@ -244,7 +244,7 @@ async def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
         print(f"[OCR] Cache hit for {file_path} ({len(cached)} results)")
         return cached
 
-    from .pdf_parser import extract_images_from_pdf, get_page_screenshots
+    from ..chunker.pdf_parser import extract_images_from_pdf, get_page_screenshots
     import pdfplumber
 
     # Create temp directory for images
@@ -260,27 +260,39 @@ async def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
             _save_ocr_cache(file_hash, results)
             return results
 
-        # Step 2: No embedded images - use page screenshots for image-heavy pages
-        print("[OCR] No embedded images found, analyzing pages for OCR candidates...")
+        # Step 2: No embedded images - use page screenshots
+        # Adaptive OCR strategy: OCR key pages + pages with visual content
+        print("[OCR] No embedded images found, analyzing pages for OCR...")
 
-        # Find pages with little text (likely image/chart heavy)
         pages_to_ocr = []
-        max_ocr_pages = 5  # Limit to control costs
+        max_ocr_pages = 15  # Budget limit
 
         with pdfplumber.open(file_path) as pdf:
+            total_pages = len(pdf.pages)
+
+            # Strategy: OCR first 3 pages (cover/TOC/summary) + pages with visual indicators
             for page_num, page in enumerate(pdf.pages, start=1):
                 text = page.extract_text() or ""
-                # If page has very little text, it's likely image/chart heavy
-                if len(text.strip()) < 100:
-                    pages_to_ocr.append(page_num)
-                    if len(pages_to_ocr) >= max_ocr_pages:
-                        break
 
-        if not pages_to_ocr:
-            # If all pages have substantial text, no need for OCR
-            print("[OCR] All pages have sufficient text, skipping page screenshots")
-            _save_ocr_cache(file_hash, [])
-            return []
+                # Always OCR first 3 pages
+                if page_num <= 3:
+                    pages_to_ocr.append(page_num)
+                    continue
+
+                # OCR pages with visual content indicators
+                visual_indicators = [
+                    len(text.strip()) < 200,  # Little text = likely image/chart heavy
+                    'chart' in text.lower() or '图' in text,
+                    'figure' in text.lower() or 'fig.' in text.lower(),
+                    'diagram' in text.lower() or '架构' in text,
+                    'table' in text.lower() and len(text.strip()) < 500,
+                ]
+
+                if any(visual_indicators):
+                    pages_to_ocr.append(page_num)
+
+                if len(pages_to_ocr) >= max_ocr_pages:
+                    break
 
         print(f"[OCR] Selected {len(pages_to_ocr)} pages for screenshot OCR: {pages_to_ocr}")
 
