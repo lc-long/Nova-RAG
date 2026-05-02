@@ -1,11 +1,11 @@
 """Conversation management routes."""
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import Optional, List
+from typing import Optional
 
 from ..database import get_db
 from ..models import Conversation, MessageModel
@@ -27,11 +27,12 @@ class CreateConversationRequest(BaseModel):
 @router.post("")
 async def create_conversation(body: CreateConversationRequest, db: Session = Depends(get_db)):
     """Create a new conversation."""
+    now = datetime.now(timezone.utc)
     conv = Conversation(
         id=str(uuid.uuid4()),
         title=body.title or "New Chat",
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
+        created_at=now,
+        updated_at=now,
     )
     db.add(conv)
     db.commit()
@@ -61,7 +62,7 @@ async def update_conversation(conversation_id: str, body: CreateConversationRequ
         raise HTTPException(status_code=404, detail="Conversation not found")
     if body.title:
         conv.title = body.title
-    conv.updated_at = datetime.utcnow()
+    conv.updated_at = datetime.now(timezone.utc)
     db.commit()
     return conv.to_dict()
 

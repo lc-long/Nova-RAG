@@ -1,9 +1,13 @@
 """SQLAlchemy models for Nova-RAG business data."""
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, DateTime, Text, ForeignKey
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from .database import Base
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class Document(Base):
@@ -14,7 +18,7 @@ class Document(Base):
     name = Column(String, nullable=False)
     size = Column(Integer, nullable=False)
     status = Column(String, default="processing")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     def to_dict(self):
         return {
@@ -32,8 +36,8 @@ class Conversation(Base):
 
     id = Column(String, primary_key=True)
     title = Column(String, nullable=False, default="New Chat")
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow)
 
     messages = relationship("MessageModel", back_populates="conversation", cascade="all,delete-orphan", order_by="MessageModel.created_at")
 
@@ -56,7 +60,7 @@ class MessageModel(Base):
     content = Column(Text, nullable=False)
     reasoning = Column(Text, nullable=True, default="")
     sources = Column(JSONB, nullable=True)  # references/citations
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     conversation = relationship("Conversation", back_populates="messages")
 
