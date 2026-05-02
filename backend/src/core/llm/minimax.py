@@ -1,7 +1,9 @@
 """LLM client with MiniMax primary + DeepSeek fallback, async SSE streaming."""
 import os
 import json
+import asyncio
 import logging
+from collections import OrderedDict
 from typing import AsyncGenerator, Optional
 from dataclasses import dataclass
 
@@ -112,6 +114,9 @@ class DeepSeekClient:
 class MinimaxClient:
     """LLM client with MiniMax primary + DeepSeek fallback."""
 
+    RESPONSE_CACHE_MAX_SIZE = 256
+    RESPONSE_CACHE_THRESHOLD = 0.95
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -122,43 +127,121 @@ class MinimaxClient:
         self.base_url = "https://api.minimaxi.com/v1"
         self._client: Optional[httpx.AsyncClient] = None
 
-        # DeepSeek fallback
+        self._response_cache: OrderedDict[str, tuple[str, list[dict], list[float]]] = OrderedDict()
+        self._embedder: Optional[object] = None
+
+# DeepSeek fallback
         deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
         self.deepseek = DeepSeekClient(deepseek_key) if deepseek_key else None
 
     @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
-        return self._client
+    def embedder(self):
+        """Lazy-load embedder for response cache."""
+        if self._embedder is None:
+            from ..embedder.aliyun_embedder import AliyunEmbedder
+            self._embedder = AliyunEmbedder()
+        return self._embedder
+
+    def _cosine_sim(self, a: list[float], b: list[float]) -> float:
+        """Compute cosine similarity between two vectors."""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = sum(x * x for x in a) ** 0.5
+        norm_b = sum(x * x for x in b) ** 0.5
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
+
+    def _cache_response_set(self, key: str, answer: str, references: list[dict], embedding: list[float]):
+        """Set response cache entry with LRU eviction."""
+        if key in self._response_cache:
+            self._response_cache.move_to_end(key)
+        self._response_cache[key] = (answer, references, embedding)
+        if len(self._response_cache) > self.RESPONSE_CACHE_MAX_SIZE:
+            self._response_cache.popitem(last=False)
+
+    def _cache_response_get(self, key: str) -> Optional[tuple[str, list[dict]]]:
+        """Get cached response if exists."""
+        if key in self._response_cache:
+            self._response_cache.move_to_end(key)
+            return self._response_cache[key][:2]
+        return None
+
+    def _find_similar_response(self, query_embedding: list[float]) -> Optional[tuple[str, list[dict]]]:
+        """Find cached response with cosine similarity > threshold."""
+        for key, (answer, refs, cached_emb) in self._response_cache.items():
+            if self._cosine_sim(query_embedding, cached_emb) > self.RESPONSE_CACHE_THRESHOLD:
+                self._response_cache.move_to_end(key)
+                return answer, refs
+        return None
 
     async def stream_chat(
         self,
         messages: list[Message],
         context_chunks: list[dict]
     ) -> AsyncGenerator[StreamChunk, None]:
-        """Stream chat with MiniMax, fallback to DeepSeek on failure."""
-        # Try MiniMax first
+        """Stream chat with MiniMax, fallback to DeepSeek on failure.
+
+        Uses response cache with semantic similarity (cosine > 0.95) to skip LLM calls.
+        """
+        last_query = messages[-1].content if messages else ""
+        cache_key = last_query.strip().lower()
+
         try:
-            async for chunk in self._stream_minimax(messages, context_chunks):
-                yield chunk
-            return  # Success, no need for fallback
-        except Exception as e:
-            logger.warning(f"[LLM] MiniMax failed: {e}, trying DeepSeek...")
+            query_embedding = await asyncio.to_thread(self.embedder.embed, [last_query])
+            query_embedding = query_embedding[0]
 
-        # Fallback to DeepSeek
-        if self.deepseek:
-            try:
-                async for chunk in self.deepseek.stream_chat(
-                    messages, context_chunks, self, self._build_references
-                ):
-                    yield chunk
+            cached = self._find_similar_response(query_embedding)
+            if cached:
+                logger.info(f"[LLM] Response cache hit for query: {last_query[:50]}...")
+                answer_text, cached_refs = cached
+                for char in answer_text:
+                    yield StreamChunk(chunk_type="answer", content=char, references=None)
+                yield StreamChunk(chunk_type="done", content="", references=cached_refs)
                 return
-            except Exception as e:
-                logger.error(f"[LLM] DeepSeek also failed: {e}")
-                raise Exception(f"Both MiniMax and DeepSeek failed. Last error: {e}")
+        except Exception:
+            pass
 
-        raise Exception(f"MiniMax failed and no DeepSeek API key configured: {e}")
+        full_answer = ""
+        result_refs = None
+
+        async def generate():
+            nonlocal full_answer, result_refs
+            try:
+                async for chunk in self._stream_minimax(messages, context_chunks):
+                    yield chunk
+                    if chunk.chunk_type == "done":
+                        result_refs = chunk.references
+                    elif chunk.chunk_type == "answer":
+                        full_answer += chunk.content
+            except Exception as e:
+                logger.warning(f"[LLM] MiniMax failed: {e}, trying DeepSeek...")
+
+                if self.deepseek:
+                    try:
+                        async for chunk in self.deepseek.stream_chat(
+                            messages, context_chunks, self, self._build_references
+                        ):
+                            yield chunk
+                            if chunk.chunk_type == "done":
+                                result_refs = chunk.references
+                            elif chunk.chunk_type == "answer":
+                                full_answer += chunk.content
+                        return
+                    except Exception as e:
+                        logger.error(f"[LLM] DeepSeek also failed: {e}")
+                        raise Exception(f"Both MiniMax and DeepSeek failed. Last error: {e}")
+
+                raise Exception(f"MiniMax failed and no DeepSeek API key configured: {e}")
+
+        try:
+            async for chunk in generate():
+                yield chunk
+        finally:
+            if full_answer and result_refs is not None:
+                try:
+                    self._cache_response_set(cache_key, full_answer, result_refs, query_embedding)
+                except Exception:
+                    pass
 
     async def _stream_minimax(
         self,
@@ -304,6 +387,8 @@ class MinimaxClient:
 5. **跨语言理解**：用户用中文问，文档可能是英文（或反之），理解中英文对应关系
 6. **图表说明**：如果文档数据来自图表但未明确图表类型，直接描述数据而非猜测图表类型
 7. **如实呈现**：基于文档内容回答，不要添加文档中没有的信息
+8. **表格数据必须核实**：如果上下文包含表格数据（标记为"--- 表格数据开始 ---"），回答中的数字必须来自表格，严禁编造；如果表格中没有某个单元格的数据，明确说明"表格中该数据缺失"
+9. **避免幻觉**：如果不确定某个信息是否在文档中，明确说明"我未在文档中找到相关内容"，不要凭记忆猜测
 
 {few_shot}
 
