@@ -13,8 +13,8 @@ from .query_rewriter import QueryRewriter
 from .aliyun_reranker import AliyunReranker
 
 # Scale-up constants: initial recall pool before RRF fusion
-_RECALL_MULTIPLIER = 4   # top_k * 4 → initial召回量
-_OUTPUT_TOP_K = 5        # RRF融合后输出量
+_RECALL_MULTIPLIER = 8   # top_k * 8 → larger initial recall pool
+_OUTPUT_TOP_K = 8        # RRF fusion output (more candidates for reranker)
 _RRF_K = 60              # RRF constant
 _MISSING_RANK = 1000     # Large rank assigned to chunks appearing in only one channel
 

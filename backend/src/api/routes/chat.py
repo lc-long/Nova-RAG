@@ -15,7 +15,7 @@ from ..models import Conversation, MessageModel
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 # Token limits
-MAX_CONTEXT_TOKENS = 4000
+MAX_CONTEXT_TOKENS = 6000  # Increased to accommodate more chunks
 MAX_HISTORY_TOKENS = 2000
 
 
@@ -99,11 +99,11 @@ async def chat_completions(request: Request, body: ChatRequest):
 
     # Retrieve context — async, pass doc_ids list for multi-doc scoping
     if effective_doc_ids and len(effective_doc_ids) == 1:
-        context_chunks = await components.retriever.retrieve(last_query, top_k=5, doc_id=effective_doc_ids[0])
+        context_chunks = await components.retriever.retrieve(last_query, top_k=8, doc_id=effective_doc_ids[0])
     elif effective_doc_ids and len(effective_doc_ids) > 1:
-        context_chunks = await components.retriever.retrieve_multi_docs(last_query, top_k=5, doc_ids=effective_doc_ids)
+        context_chunks = await components.retriever.retrieve_multi_docs(last_query, top_k=8, doc_ids=effective_doc_ids)
     else:
-        context_chunks = await components.retriever.retrieve(last_query, top_k=5)
+        context_chunks = await components.retriever.retrieve(last_query, top_k=8)
     if not context_chunks:
         context_chunks = []
 

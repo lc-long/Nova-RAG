@@ -40,12 +40,12 @@ def parse_pdf(file_path: str) -> Generator[tuple[str, int, str], None, None]:
             text = page.extract_text() or ""
             
             if table_texts:
-                # Remove table regions from text to avoid duplication
-                cleaned_text = _remove_table_regions(text, table_texts)
-                # Append formatted tables
+                # Append formatted tables to text (skip aggressive table region removal
+                # which was deleting too much surrounding text)
                 table_text = "\n\n".join(table_texts)
-                if cleaned_text.strip():
-                    full_text = f"{cleaned_text.strip()}\n\n{table_text}"
+                full_text = text.strip()
+                if full_text:
+                    full_text = f"{full_text}\n\n{table_text}"
                 else:
                     full_text = table_text
             else:
