@@ -1,16 +1,16 @@
-"""OCR module for image text extraction using vision models.
+"""OCR module for async image text extraction using vision models.
 
-Supports multiple vision models with fallback:
-1. Qwen-VL-Plus (primary - via DashScope)
+Supports Qwen-VL via DashScope for image understanding.
 """
 import os
 import hashlib
 import json
 import base64
-import requests
 from pathlib import Path
 from typing import Optional
 from abc import ABC, abstractmethod
+
+import httpx
 
 # Cache directory for OCR results (avoid re-calling API for same file)
 _OCR_CACHE_DIR = Path(__file__).parent.parent.parent.parent / "ocr_cache"
@@ -50,102 +50,43 @@ def _save_ocr_cache(file_hash: str, results: list[dict]) -> None:
 
 class VisionModel(ABC):
     """Base class for vision models."""
-    
+
     @abstractmethod
-    def describe_image(self, image_base64: str, prompt: str = None) -> str:
+    async def describe_image(self, image_base64: str, prompt: str = None) -> str:
         """Describe image content or extract text."""
         pass
 
 
-class MiniMaxVL(VisionModel):
-    """MiniMax Vision-Language Model."""
-    
-    def __init__(self, api_key: str = None, group_id: str = None):
-        self.api_key = api_key or os.getenv("MINIMAX_API_KEY", "")
-        self.group_id = group_id or os.getenv("MINIMAX_GROUP_ID", "")
-        self.base_url = "https://api.minimax.chat/v1"
-        self.model = "MiniMax-VL-01"
-    
-    def describe_image(self, image_base64: str, prompt: str = None) -> str:
-        """Describe image using MiniMax-VL."""
-        if not prompt:
-            prompt = (
-                "请详细描述这张图片的内容。如果图片中包含文字，请提取所有文字内容。"
-                "如果图片是图表、表格或示意图，请描述其结构和关键信息。"
-            )
-        
-        try:
-            headers = {
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            }
-            
-            payload = {
-                "model": self.model,
-                "group_id": self.group_id,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:image/png;base64,{image_base64}"
-                                }
-                            },
-                            {
-                                "type": "text",
-                                "text": prompt
-                            }
-                        ]
-                    }
-                ],
-                "stream": False,
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/text/chatcompletion_v2",
-                headers=headers,
-                json=payload,
-                timeout=30,
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                choices = data.get("choices", [])
-                if choices:
-                    return choices[0].get("message", {}).get("content", "")
-            
-            print(f"[MiniMax-VL] API error: {response.status_code}")
-            return ""
-            
-        except Exception as e:
-            print(f"[MiniMax-VL] Error: {e}")
-            return ""
-
-
 class QwenVL(VisionModel):
-    """Qwen Vision-Language Model (DashScope)."""
-    
+    """Qwen Vision-Language Model (DashScope) - async."""
+
     def __init__(self, api_key: str = None):
         self.api_key = api_key or os.getenv("ALIYUN_API_KEY", "")
         self.base_url = "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
         self.model = "qwen-vl-plus"
-    
-    def describe_image(self, image_base64: str, prompt: str = None) -> str:
-        """Describe image using Qwen-VL."""
+        self._client: Optional[httpx.AsyncClient] = None
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Lazy-create shared async HTTP client."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        return self._client
+
+    async def describe_image(self, image_base64: str, prompt: str = None) -> str:
+        """Describe image using async Qwen-VL."""
         if not prompt:
             prompt = (
                 "请详细描述这张图片的内容。如果图片中包含文字，请提取所有文字内容。"
                 "如果图片是图表、表格或示意图，请描述其结构和关键信息。"
             )
-        
+
         try:
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
             }
-            
+
             payload = {
                 "model": self.model,
                 "input": {
@@ -164,14 +105,13 @@ class QwenVL(VisionModel):
                     ]
                 },
             }
-            
-            response = requests.post(
+
+            response = await self.client.post(
                 self.base_url,
                 headers=headers,
                 json=payload,
-                timeout=30,
             )
-            
+
             if response.status_code == 200:
                 data = response.json()
                 output = data.get("output", {})
@@ -184,20 +124,24 @@ class QwenVL(VisionModel):
                         return content[0].get("text", "")
                     elif isinstance(content, str):
                         return content
-            
+
             print(f"[Qwen-VL] API error: {response.status_code} - {response.text[:200]}")
             return ""
-            
+
         except Exception as e:
             print(f"[Qwen-VL] Error: {e}")
             return ""
 
+    async def close(self):
+        """Close the underlying HTTP client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
+
 
 class OCRProcessor:
-    """OCR processor with vision models.
+    """Async OCR processor with vision models.
 
     Uses Qwen-VL (DashScope) for image understanding.
-    MiniMax image understanding is via MCP tools, not direct API.
     """
 
     def __init__(self):
@@ -210,22 +154,22 @@ class OCRProcessor:
 
         if not self.models:
             print("[OCR] Warning: No vision model configured. Set ALIYUN_API_KEY.")
-    
-    def process_image(self, image_base64: str, prompt: str = None) -> str:
-        """Process image with fallback models.
-        
+
+    async def process_image(self, image_base64: str, prompt: str = None) -> str:
+        """Process image with fallback models (async).
+
         Tries each model in order until one succeeds.
-        
+
         Args:
             image_base64: Base64 encoded image
             prompt: Optional custom prompt
-            
+
         Returns:
             Image description or extracted text
         """
         for model_name, model in self.models:
             try:
-                result = model.describe_image(image_base64, prompt)
+                result = await model.describe_image(image_base64, prompt)
                 if result and len(result) > 10:
                     print(f"[OCR] Success with {model_name}")
                     return result
@@ -234,17 +178,17 @@ class OCRProcessor:
             except Exception as e:
                 print(f"[OCR] {model_name} failed: {e}")
                 continue
-        
+
         print("[OCR] All models failed")
         return ""
-    
-    def process_image_with_context(self, image_base64: str, context: str = "") -> str:
-        """Process image with document context for better understanding.
-        
+
+    async def process_image_with_context(self, image_base64: str, context: str = "") -> str:
+        """Process image with document context for better understanding (async).
+
         Args:
             image_base64: Base64 encoded image
             context: Surrounding text context
-            
+
         Returns:
             Image description
         """
@@ -256,8 +200,13 @@ class OCRProcessor:
             "3. 所有可见的文字内容\n"
             "4. 关键数据或信息"
         )
-        
-        return self.process_image(image_base64, prompt)
+
+        return await self.process_image(image_base64, prompt)
+
+    async def close(self):
+        """Close all underlying vision model clients."""
+        for _, model in self.models:
+            await model.close()
 
 
 # Global OCR processor instance
@@ -272,8 +221,8 @@ def get_ocr_processor() -> OCRProcessor:
     return _ocr_processor
 
 
-def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
-    """Extract and process images from PDF with intelligent OCR strategy.
+async def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
+    """Extract and process images from PDF with intelligent async OCR strategy.
 
     Strategy:
     1. Check cache first (based on file hash)
@@ -307,7 +256,7 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
 
         if images:
             print(f"[OCR] Found {len(images)} embedded images in PDF")
-            results = _process_image_list(images)
+            results = await _process_image_list(images)
             _save_ocr_cache(file_hash, results)
             return results
 
@@ -339,7 +288,7 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
         all_screenshots = get_page_screenshots(file_path, temp_dir)
         selected_screenshots = [s for s in all_screenshots if s["page_num"] in pages_to_ocr]
 
-        results = _process_image_list(selected_screenshots)
+        results = await _process_image_list(selected_screenshots)
         _save_ocr_cache(file_hash, results)
         return results
 
@@ -353,8 +302,8 @@ def process_pdf_images(file_path: str, doc_id: str) -> list[dict]:
             pass
 
 
-def _process_image_list(images: list[dict]) -> list[dict]:
-    """Process a list of images with OCR.
+async def _process_image_list(images: list[dict]) -> list[dict]:
+    """Process a list of images with async OCR.
 
     Args:
         images: List of image dicts with image_base64
@@ -371,7 +320,7 @@ def _process_image_list(images: list[dict]) -> list[dict]:
             continue
 
         # Get image description
-        description = ocr.process_image(image_base64)
+        description = await ocr.process_image(image_base64)
 
         if description:
             results.append({

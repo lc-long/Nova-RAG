@@ -1,11 +1,12 @@
-"""LLM-based query rewriter to expand queries with synonyms and format variations.
+"""LLM-based async query rewriter to expand queries with synonyms and format variations.
 
 Addresses the vocabulary mismatch problem where user phrasing (e.g., "限制高度 30m")
 doesn't match document phrasing (e.g., "限高 30 m").
 """
 import os
 from typing import Optional
-from functools import lru_cache
+
+import httpx
 
 os.environ["HF_ENDPOINT"] = os.getenv("HF_ENDPOINT", "https://hf-mirror.com")
 
@@ -14,7 +15,7 @@ SHORT_QUERY_THRESHOLD = 10
 
 
 class QueryRewriter:
-    """Expands a user query into multiple rewrite variants using LLM."""
+    """Expands a user query into multiple rewrite variants using async LLM."""
 
     SYSTEM_PROMPT = (
         "你是一个专业的检索词优化专家。用户输入了一个查询，请提取核心关键词，"
@@ -25,7 +26,8 @@ class QueryRewriter:
     def __init__(self, llm_client=None):
         self.llm_client = llm_client
         self._client = None
-        self._cache = {}
+        self._http_client: Optional[httpx.AsyncClient] = None
+        self._cache: dict[str, list[str]] = {}
 
     @property
     def client(self):
@@ -35,7 +37,14 @@ class QueryRewriter:
             self._client = MinimaxClient()
         return self._client
 
-    def rewrite(self, user_query: str) -> list[str]:
+    @property
+    def http_client(self) -> httpx.AsyncClient:
+        """Lazy-create shared async HTTP client."""
+        if self._http_client is None or self._http_client.is_closed:
+            self._http_client = httpx.AsyncClient(timeout=httpx.Timeout(10.0))
+        return self._http_client
+
+    async def rewrite(self, user_query: str) -> list[str]:
         """Rewrite a single user query into multiple search variants.
 
         Skips LLM for short queries to improve response time.
@@ -63,8 +72,6 @@ class QueryRewriter:
         prompt = f"{self.SYSTEM_PROMPT}\n\n用户查询：{user_query}"
 
         try:
-            import requests
-
             headers = {
                 "Authorization": f"Bearer {self.client.api_key}",
                 "Content-Type": "application/json"
@@ -77,11 +84,10 @@ class QueryRewriter:
                 "stream": False
             }
 
-            response = requests.post(
+            response = await self.http_client.post(
                 f"{self.client.base_url}/text/chatcompletion_v2",
                 headers=headers,
                 json=payload,
-                timeout=10  # Reduced from 15s
             )
 
             if response.status_code != 200:
@@ -124,12 +130,12 @@ class QueryRewriter:
                 unique.append(r)
         return unique
 
-    def rewrite_with_fallback(self, user_query: str) -> list[str]:
+    async def rewrite_with_fallback(self, user_query: str) -> list[str]:
         """Rewrite with built-in fallback patterns when LLM is unavailable.
 
         Provides common aviation/DRONE specific expansions as a safety net.
         """
-        rewrites = self.rewrite(user_query)
+        rewrites = await self.rewrite(user_query)
         if len(rewrites) <= 1:
             # LLM failed or returned nothing, use pattern-based expansion
             rewrites = self._pattern_expand(user_query)
@@ -156,12 +162,17 @@ class QueryRewriter:
 
         return expansions[:5]
 
+    async def close(self):
+        """Close the underlying HTTP client."""
+        if self._http_client and not self._http_client.is_closed:
+            await self._http_client.aclose()
 
-def rewrite_query(user_query: str) -> list[str]:
+
+async def rewrite_query(user_query: str) -> list[str]:
     """Convenience function for query rewriting.
 
     Returns the original query plus 3-5 LLM-generated rewrites.
     Falls back to pattern-based expansion if LLM is unavailable.
     """
     rewriter = QueryRewriter()
-    return rewriter.rewrite_with_fallback(user_query)
+    return await rewriter.rewrite_with_fallback(user_query)

@@ -1,8 +1,10 @@
-"""Minimax m2.7 LLM client with native HTTP requests and SSE streaming."""
+"""Minimax m2.7 LLM client with async HTTP and SSE streaming."""
 import os
 import json
-from typing import Generator, Optional
+from typing import AsyncGenerator, Optional
 from dataclasses import dataclass
+
+import httpx
 
 
 @dataclass
@@ -19,7 +21,7 @@ class StreamChunk:
 
 
 class MinimaxClient:
-    """Minimax m2.7 streaming client using native requests."""
+    """Minimax m2.7 async streaming client using httpx."""
 
     def __init__(
         self,
@@ -29,13 +31,21 @@ class MinimaxClient:
         self.api_key = api_key or os.getenv("MINIMAX_API_KEY", "")
         self.group_id = group_id or os.getenv("MINIMAX_GROUP_ID", "")
         self.base_url = "https://api.minimaxi.com/v1"
+        self._client: Optional[httpx.AsyncClient] = None
 
-    def stream_chat(
+    @property
+    def client(self) -> httpx.AsyncClient:
+        """Lazy-create shared async HTTP client (connection pooling)."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+        return self._client
+
+    async def stream_chat(
         self,
         messages: list[Message],
         context_chunks: list[dict]
-    ) -> Generator[StreamChunk, None, None]:
-        """Stream chat completion with RAG context using SSE.
+    ) -> AsyncGenerator[StreamChunk, None]:
+        """Stream chat completion with RAG context using async SSE.
 
         Args:
             messages: Chat history
@@ -46,10 +56,7 @@ class MinimaxClient:
         """
         context_text = self._build_context_prompt(context_chunks)
         prompt = self._build_prompt(messages, context_text)
-
         references = self._build_references(context_chunks)
-
-        import requests
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -63,67 +70,75 @@ class MinimaxClient:
             "stream": True
         }
 
-        response = requests.post(
-            f"{self.base_url}/text/chatcompletion_v2",
-            headers=headers,
-            json=payload,
-            stream=True,
-            timeout=60
-        )
+        try:
+            async with self.client.stream(
+                "POST",
+                f"{self.base_url}/text/chatcompletion_v2",
+                headers=headers,
+                json=payload,
+            ) as response:
+                if response.status_code != 200:
+                    body = await response.aread()
+                    raise Exception(f"Minimax API error: {response.status_code} - {body.decode()}")
 
-        if response.status_code != 200:
-            raise Exception(f"Minimax API error: {response.status_code} - {response.text}")
+                async for line in response.aiter_lines():
+                    if not line or not line.startswith("data:"):
+                        continue
 
-        from sseclient import SSEClient
+                    data_str = line[5:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
 
-        client = SSEClient(response)
-        for event in client.events():
-            if not event.data or event.data.strip() == "[DONE]":
-                continue
+                    try:
+                        data = json.loads(data_str)
+                        if not isinstance(data, dict):
+                            continue
 
-            try:
-                data = json.loads(event.data)
+                        choices = data.get("choices")
+                        if not choices or not isinstance(choices, list) or len(choices) == 0:
+                            continue
 
-                if not isinstance(data, dict):
-                    continue
+                        choice = choices[0]
+                        delta = choice.get("delta", {})
+                        if not isinstance(delta, dict):
+                            continue
 
-                choices = data.get("choices")
-                if not choices or not isinstance(choices, list) or len(choices) == 0:
-                    continue
+                        reasoning = delta.get("reasoning_content", "")
+                        content = delta.get("content", "")
 
-                choice = choices[0]
-                delta = choice.get("delta", {})
-                if not isinstance(delta, dict):
-                    continue
+                        if reasoning:
+                            yield StreamChunk(
+                                chunk_type="reasoning",
+                                content=reasoning,
+                                references=None
+                            )
 
-                reasoning = delta.get("reasoning_content", "")
-                content = delta.get("content", "")
+                        if content:
+                            yield StreamChunk(
+                                chunk_type="answer",
+                                content=content,
+                                references=None
+                            )
 
-                if reasoning:
-                    yield StreamChunk(
-                        chunk_type="reasoning",
-                        content=reasoning,
-                        references=None
-                    )
+                        finish_reason = choice.get("finish_reason")
+                        if finish_reason:
+                            yield StreamChunk(chunk_type="done", content="", references=references)
+                            return
 
-                if content:
-                    yield StreamChunk(
-                        chunk_type="answer",
-                        content=content,
-                        references=None
-                    )
+                    except json.JSONDecodeError:
+                        continue
+                    except Exception:
+                        continue
 
-                finish_reason = choice.get("finish_reason")
-                if finish_reason:
-                    yield StreamChunk(chunk_type="done", content="", references=references)
-                    return
-
-            except json.JSONDecodeError:
-                continue
-            except Exception:
-                continue
+        except httpx.HTTPError as e:
+            raise Exception(f"Minimax API connection error: {e}")
 
         yield StreamChunk(chunk_type="done", content="", references=references)
+
+    async def close(self):
+        """Close the underlying HTTP client."""
+        if self._client and not self._client.is_closed:
+            await self._client.aclose()
 
     def _build_context_prompt(self, chunks: list[dict]) -> str:
         """Build context section of prompt with [N] citation format."""

@@ -58,7 +58,11 @@ async def upload_document(
 
 
 def run_ingestion(components, doc_id: str, filename: str, file_path: str):
-    """Background ingestion task with optional OCR for images."""
+    """Background ingestion task with optional OCR for images.
+
+    Note: Uses asyncio.run() for async OCR calls within sync context.
+    """
+    import asyncio
     from ...core.chunker.pdf_parser import extract_text_from_pdf, extract_text_from_pdf_with_pages, merge_ocr_into_text
     from ...core.chunker.docx_parser import extract_text_from_docx
     from ...core.chunker.excel_parser import extract_text_from_excel
@@ -71,9 +75,9 @@ def run_ingestion(components, doc_id: str, filename: str, file_path: str):
             # Extract page-by-page text for proper OCR association
             pages = extract_text_from_pdf_with_pages(file_path)
 
-            # Process images with OCR
+            # Process images with OCR (async)
             try:
-                image_results = process_pdf_images(file_path, doc_id)
+                image_results = asyncio.run(process_pdf_images(file_path, doc_id))
                 if image_results:
                     print(f"[DocsUpload] OCR: Found {len(image_results)} images with descriptions")
                     text = merge_ocr_into_text(pages, image_results)

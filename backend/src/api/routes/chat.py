@@ -1,6 +1,7 @@
-"""Chat completion routes."""
+"""Chat completion routes - fully async."""
 import json
 import uuid
+import asyncio
 from datetime import datetime
 from typing import Optional, List
 from pydantic import BaseModel
@@ -22,7 +23,6 @@ def estimate_tokens(text: str) -> int:
     """Estimate token count with better CJK handling.
 
     Heuristic: Chinese chars ≈ 1.5 tokens each, other chars ≈ 0.25 tokens each.
-    This is much more accurate than len/4 for mixed Chinese-English text.
     """
     chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
     other_chars = len(text) - chinese_chars
@@ -36,7 +36,6 @@ def truncate_messages(messages: List[Message], max_tokens: int) -> List[Message]
 
     total_tokens = 0
     truncated = []
-    # Process from newest to oldest
     for msg in reversed(messages):
         msg_tokens = estimate_tokens(msg.content)
         if total_tokens + msg_tokens > max_tokens:
@@ -44,7 +43,6 @@ def truncate_messages(messages: List[Message], max_tokens: int) -> List[Message]
         truncated.insert(0, msg)
         total_tokens += msg_tokens
 
-    # Always keep at least the last user message
     if not truncated and messages:
         truncated = [messages[-1]]
 
@@ -84,7 +82,7 @@ class ChatRequest(BaseModel):
 
 @router.post("/completions")
 async def chat_completions(request: Request, body: ChatRequest):
-    """SSE streaming chat with optional doc_ids scoping and conversation persistence."""
+    """Async SSE streaming chat with optional doc_ids scoping and conversation persistence."""
     components = request.app.state.components
     if not components.llm_client or not components.retriever:
         raise HTTPException(status_code=500, detail="Service not initialized")
@@ -99,55 +97,71 @@ async def chat_completions(request: Request, body: ChatRequest):
     # Truncate history to fit token limit
     messages = truncate_messages(all_messages, MAX_HISTORY_TOKENS)
 
-    # Retrieve context — pass doc_ids list for multi-doc scoping
+    # Retrieve context — async, pass doc_ids list for multi-doc scoping
     if effective_doc_ids and len(effective_doc_ids) == 1:
-        context_chunks = components.retriever.retrieve(last_query, top_k=5, doc_id=effective_doc_ids[0])
+        context_chunks = await components.retriever.retrieve(last_query, top_k=5, doc_id=effective_doc_ids[0])
     elif effective_doc_ids and len(effective_doc_ids) > 1:
-        context_chunks = components.retriever.retrieve_multi_docs(last_query, top_k=5, doc_ids=effective_doc_ids)
+        context_chunks = await components.retriever.retrieve_multi_docs(last_query, top_k=5, doc_ids=effective_doc_ids)
     else:
-        context_chunks = components.retriever.retrieve(last_query, top_k=5)
+        context_chunks = await components.retriever.retrieve(last_query, top_k=5)
     if not context_chunks:
         context_chunks = []
 
     # Truncate context to fit token limit
     context_chunks = truncate_context(context_chunks, MAX_CONTEXT_TOKENS)
 
-    # Ensure conversation exists
+    # Ensure conversation exists (wrap sync DB in thread pool)
     conversation_id = body.conversation_id
     if conversation_id:
-        db = next(get_db())
-        conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-        if not conv:
+        def _check_conv():
+            db = next(get_db())
+            try:
+                conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+                return conv.id if conv else None
+            finally:
+                db.close()
+
+        existing = await asyncio.to_thread(_check_conv)
+        if not existing:
             conversation_id = None
-        db.close()
 
     if not conversation_id:
+        def _create_conv():
+            db = next(get_db())
+            try:
+                conv = Conversation(
+                    id=str(uuid.uuid4()),
+                    title=last_query[:50] if last_query else "New Chat",
+                    created_at=datetime.utcnow(),
+                    updated_at=datetime.utcnow(),
+                )
+                db.add(conv)
+                db.commit()
+                return conv.id
+            finally:
+                db.close()
+
+        conversation_id = await asyncio.to_thread(_create_conv)
+
+    # Save user message (wrap sync DB in thread pool)
+    def _save_user_msg():
         db = next(get_db())
-        conv = Conversation(
-            id=str(uuid.uuid4()),
-            title=last_query[:50] if last_query else "New Chat",
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
-        )
-        db.add(conv)
-        db.commit()
-        conversation_id = conv.id
-        db.close()
+        try:
+            user_msg = MessageModel(
+                id=str(uuid.uuid4()),
+                conversation_id=conversation_id,
+                role="user",
+                content=last_query,
+                created_at=datetime.utcnow(),
+            )
+            db.add(user_msg)
+            db.commit()
+        finally:
+            db.close()
 
-    # Save user message
-    db = next(get_db())
-    user_msg = MessageModel(
-        id=str(uuid.uuid4()),
-        conversation_id=conversation_id,
-        role="user",
-        content=last_query,
-        created_at=datetime.utcnow(),
-    )
-    db.add(user_msg)
-    db.commit()
-    db.close()
+    await asyncio.to_thread(_save_user_msg)
 
-    def generate():
+    async def generate():
         full_answer = ""
         full_reasoning = ""
         full_thought = ""
@@ -167,33 +181,38 @@ async def chat_completions(request: Request, body: ChatRequest):
             full_thought += thought2 + "\n"
             yield f"data: {json.dumps({'type': 'thought', 'content': thought2})}\n\n"
 
-            # --- LLM streaming ---
-            for chunk in components.llm_client.stream_chat(messages, context_chunks):
+            # --- Async LLM streaming ---
+            async for chunk in components.llm_client.stream_chat(messages, context_chunks):
                 if chunk.chunk_type == "done":
                     references = chunk.references or []
                     yield f"data: {json.dumps({'done': True, 'references': references, 'conversation_id': conversation_id})}\n\n"
 
-                    # Save assistant message
-                    db = next(get_db())
-                    assistant_msg = MessageModel(
-                        id=str(uuid.uuid4()),
-                        conversation_id=conversation_id,
-                        role="assistant",
-                        content=full_answer,
-                        reasoning=full_reasoning,
-                        sources=references,
-                        created_at=datetime.utcnow(),
-                    )
-                    db.add(assistant_msg)
+                    # Save assistant message (wrap sync DB in thread pool)
+                    def _save_assistant():
+                        db = next(get_db())
+                        try:
+                            assistant_msg = MessageModel(
+                                id=str(uuid.uuid4()),
+                                conversation_id=conversation_id,
+                                role="assistant",
+                                content=full_answer,
+                                reasoning=full_reasoning,
+                                sources=references,
+                                created_at=datetime.utcnow(),
+                            )
+                            db.add(assistant_msg)
 
-                    conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-                    if conv:
-                        conv.updated_at = datetime.utcnow()
-                        msg_count = db.query(MessageModel).filter(MessageModel.conversation_id == conversation_id).count()
-                        if msg_count <= 1:
-                            conv.title = last_query[:50]
-                    db.commit()
-                    db.close()
+                            conv = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+                            if conv:
+                                conv.updated_at = datetime.utcnow()
+                                msg_count = db.query(MessageModel).filter(MessageModel.conversation_id == conversation_id).count()
+                                if msg_count <= 1:
+                                    conv.title = last_query[:50]
+                            db.commit()
+                        finally:
+                            db.close()
+
+                    await asyncio.to_thread(_save_assistant)
 
                 elif chunk.chunk_type == "reasoning":
                     full_reasoning += chunk.content

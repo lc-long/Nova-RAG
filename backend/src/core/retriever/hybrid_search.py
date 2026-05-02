@@ -1,8 +1,10 @@
-"""Hybrid retriever combining dense (ChromaDB) and sparse (BM25) search.
+"""Async hybrid retriever combining dense (pgvector) and sparse (BM25) search.
 
 Uses Reciprocal Rank Fusion (RRF) to merge results from both engines.
 Supports multi-query expansion via QueryRewriter to bridge vocabulary gaps.
+Vector and BM25 searches run in parallel via asyncio.gather().
 """
+import asyncio
 import re
 from typing import Optional
 
@@ -11,14 +13,14 @@ from .query_rewriter import QueryRewriter
 from .aliyun_reranker import AliyunReranker
 
 # Scale-up constants: initial recall pool before RRF fusion
-_RECALL_MULTIPLIER = 4   # top_k * 4 → initial召回量（减少到4）
-_OUTPUT_TOP_K = 5        # RRF融合后输出量（减少到5，提高精度）
+_RECALL_MULTIPLIER = 4   # top_k * 4 → initial召回量
+_OUTPUT_TOP_K = 5        # RRF融合后输出量
 _RRF_K = 60              # RRF constant
 _MISSING_RANK = 1000     # Large rank assigned to chunks appearing in only one channel
 
 
 class HybridRetriever:
-    """Hybrid retriever using vector + BM25 with RRF fusion."""
+    """Async hybrid retriever using vector + BM25 with RRF fusion."""
 
     def __init__(
         self,
@@ -37,15 +39,13 @@ class HybridRetriever:
         self.rewriter = rewriter or QueryRewriter()
         self.reranker = AliyunReranker()
 
-    def retrieve(self, query: str, top_k: int = 5, doc_id: Optional[str] = None) -> list[dict]:
-        """Hybrid search: multi-query expanded vector + BM25 with RRF fusion.
+    async def retrieve(self, query: str, top_k: int = 5, doc_id: Optional[str] = None) -> list[dict]:
+        """Async hybrid search: multi-query expanded vector + BM25 with RRF fusion.
 
-        If doc_id is provided, scope search to that document only.
-        Scaling: initial recall pool = top_k * 6 (30 when top_k=5),
-        output after RRF = _OUTPUT_TOP_K (20).
+        Vector and BM25 searches run in parallel for reduced latency.
         """
         # Rewrite query into multiple variants to bridge vocabulary gap
-        rewritten_queries = self.rewriter.rewrite_with_fallback(query)
+        rewritten_queries = await self.rewriter.rewrite_with_fallback(query)
         if len(rewritten_queries) > 10:
             rewritten_queries = rewritten_queries[:10]
 
@@ -57,51 +57,36 @@ class HybridRetriever:
 
         if file_match:
             filename_hint = file_match.group(1).lower()
-            dense_results = self._metadata_search(filename_hint, recall_k, doc_id)
+            dense_task = self._metadata_search(filename_hint, recall_k, doc_id)
         else:
-            dense_results = self._multi_query_vector_search(rewritten_queries, recall_k, doc_id)
+            dense_task = self._multi_query_vector_search(rewritten_queries, recall_k, doc_id)
 
         # --- BM25 (sparse) retrieval across all query variants ---
-        sparse_results = []
-        if self.bm25_indexer:
-            sparse_ids = self._multi_query_bm25_search(rewritten_queries, recall_k, doc_id)
-            for chunk_id, bm25_score in sparse_ids:
-                content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
-                result_doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
-                parent_id = ""
-                try:
-                    vec_result = self.vector_store.collection.get(ids=[chunk_id])
-                    if vec_result["metadatas"]:
-                        parent_id = vec_result["metadatas"][0].get("parent_id", "")
-                except Exception:
-                    pass
-                sparse_results.append({
-                    "child_id": None,
-                    "parent_id": chunk_id,
-                    "child_content": "",
-                    "parent_content": content,
-                    "doc_id": result_doc_id,
-                    "page_number": 0,
-                    "bm25_score": bm25_score,
-                })
+        sparse_task = self._multi_query_bm25_search(rewritten_queries, recall_k, doc_id)
+
+        # --- Run vector and BM25 in parallel ---
+        dense_results, sparse_results = await asyncio.gather(dense_task, sparse_task)
 
         # --- RRF Fusion (rank-based, not score-based) ---
         fused = self._rrf_fuse(dense_results, sparse_results, _OUTPUT_TOP_K)
 
-        # --- Cross-Encoder reranking: refine top-20 with deep semantic scoring ---
-        reranked = self.reranker.rerank(query, fused, top_k=_OUTPUT_TOP_K)
+        # --- Cross-Encoder reranking: refine with deep semantic scoring ---
+        reranked = await self.reranker.rerank(query, fused, top_k=_OUTPUT_TOP_K)
         return reranked
 
-    def retrieve_multi_docs(self, query: str, top_k: int = 5, doc_ids: list[str] = None) -> list[dict]:
-        """Hybrid search scoped to multiple doc_ids. Merges and deduplicates results."""
+    async def retrieve_multi_docs(self, query: str, top_k: int = 5, doc_ids: list[str] = None) -> list[dict]:
+        """Async hybrid search scoped to multiple doc_ids. Merges and deduplicates results."""
         if not doc_ids:
-            return self.retrieve(query, top_k)
+            return await self.retrieve(query, top_k)
+
+        # Run all doc retrievals in parallel
+        tasks = [self.retrieve(query, top_k, doc_id=did) for did in doc_ids]
+        all_doc_results = await asyncio.gather(*tasks)
 
         all_results: list[dict] = []
         seen_keys: set[str] = set()
 
-        for did in doc_ids:
-            results = self.retrieve(query, top_k, doc_id=did)
+        for results in all_doc_results:
             for r in results:
                 key = r.get("child_id") or r.get("parent_id")
                 if key and key not in seen_keys:
@@ -112,17 +97,16 @@ class HybridRetriever:
         all_results.sort(key=lambda r: r.get("rerank_score", 0), reverse=True)
         return all_results[:_OUTPUT_TOP_K]
 
-    def _multi_query_vector_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
-        """Run vector search across multiple query variants, merge results.
-
-        If doc_id is provided, scope search to that document only.
-        """
+    async def _multi_query_vector_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
+        """Run vector search across multiple query variants, merge results."""
         chunk_best: dict[str, dict] = {}
 
         for q in queries:
             normalized_q = _normalize_text(q)
-            query_embedding = self.embedder.embed([normalized_q])[0]
-            results = self._vector_search(query_embedding, top_k, doc_id)
+            # Wrap sync embedder call in thread pool
+            query_embedding = await asyncio.to_thread(self.embedder.embed, [normalized_q])
+            query_embedding = query_embedding[0]
+            results = await self._vector_search(query_embedding, top_k, doc_id)
             for r in results:
                 key = r.get("child_id") or r.get("parent_id")
                 if key is None:
@@ -135,21 +119,39 @@ class HybridRetriever:
 
         return list(chunk_best.values())
 
-    def _multi_query_bm25_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[tuple[str, float]]:
+    async def _multi_query_bm25_search(self, queries: list[str], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
         """Run BM25 search across multiple query variants, merge by best score.
 
         If doc_id is provided, search only that document's chunks.
+        Returns list of dicts compatible with RRF fusion.
         """
         chunk_best_score: dict[str, float] = {}
 
         for q in queries:
-            results = self.bm25_indexer.search(q, top_k=top_k, doc_id=doc_id)
+            # BM25 search is CPU-bound, run in thread pool
+            results = await asyncio.to_thread(self.bm25_indexer.search, q, top_k=top_k, doc_id=doc_id)
             for chunk_id, score in results:
                 if chunk_id not in chunk_best_score or score > chunk_best_score[chunk_id]:
                     chunk_best_score[chunk_id] = score
 
         sorted_results = sorted(chunk_best_score.items(), key=lambda x: x[1], reverse=True)
-        return sorted_results[:top_k]
+
+        # Convert to dict format for RRF fusion
+        sparse_results = []
+        for chunk_id, bm25_score in sorted_results[:top_k]:
+            content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
+            result_doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
+            sparse_results.append({
+                "child_id": None,
+                "parent_id": chunk_id,
+                "child_content": "",
+                "parent_content": content,
+                "doc_id": result_doc_id,
+                "page_number": 0,
+                "bm25_score": bm25_score,
+            })
+
+        return sparse_results
 
     def _rrf_fuse(
         self,
@@ -230,9 +232,11 @@ class HybridRetriever:
 
         return chunks
 
-    def _vector_search(self, query_embedding: list[float], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
-        """Standard ChromaDB vector search with parent-child assembly, optionally filtered by doc_id."""
-        results = self.vector_store.query(query_embedding, top_k, doc_id=doc_id)
+    async def _vector_search(self, query_embedding: list[float], top_k: int, doc_id: Optional[str] = None) -> list[dict]:
+        """Async pgvector search with parent-child assembly, optionally filtered by doc_id."""
+        # Wrap synchronous DB query in thread pool
+        results = await asyncio.to_thread(self.vector_store.query, query_embedding, top_k, doc_id=doc_id)
+
         chunks = []
         seen_parent_ids = set()
         seen_texts = set()
@@ -256,7 +260,8 @@ class HybridRetriever:
                 if parent_id in seen_parent_ids:
                     continue
                 seen_parent_ids.add(parent_id)
-                parent_results = self.vector_store.get_by_parent(parent_id)
+                # Wrap sync DB call in thread pool
+                parent_results = await asyncio.to_thread(self.vector_store.get_by_parent, parent_id)
                 if parent_results["documents"]:
                     chunks.append({
                         "child_id": chunk_id,
@@ -277,7 +282,8 @@ class HybridRetriever:
                 })
 
         if not chunks:
-            results_relaxed = self.vector_store.query(query_embedding, top_k)
+            # Relaxed search without doc_id filter
+            results_relaxed = await asyncio.to_thread(self.vector_store.query, query_embedding, top_k)
             for i in range(len(results_relaxed["ids"][0])):
                 metadata = results_relaxed["metadatas"][0][i]
                 distance = results_relaxed["distances"][0][i]
@@ -292,7 +298,7 @@ class HybridRetriever:
                     if parent_id in seen_parent_ids:
                         continue
                     seen_parent_ids.add(parent_id)
-                    parent_results = self.vector_store.get_by_parent(parent_id)
+                    parent_results = await asyncio.to_thread(self.vector_store.get_by_parent, parent_id)
                     if parent_results["documents"]:
                         chunks.append({
                             "child_id": results_relaxed["ids"][0][i],
@@ -314,17 +320,21 @@ class HybridRetriever:
 
         return chunks
 
-    def _metadata_search(self, filename_hint: str, top_k: int, doc_id: Optional[str] = None) -> list[dict]:
+    async def _metadata_search(self, filename_hint: str, top_k: int, doc_id: Optional[str] = None) -> list[dict]:
         """Search by source metadata containing filename hint, optionally scoped to a doc_id."""
         try:
-            where_filter = {"source": {"$contains": filename_hint}}
-            if doc_id:
-                # Enforce doc_id scoping even when searching by filename
-                where_filter["doc_id"] = doc_id
-            all_data = self.vector_store.collection.get(
-                where=where_filter,
-                include=["documents", "metadatas", "distances"]
-            )
+            # Wrap sync DB call in thread pool
+            def _do_metadata_search():
+                where_filter = {"source": {"$contains": filename_hint}}
+                if doc_id:
+                    where_filter["doc_id"] = doc_id
+                return self.vector_store.collection.get(
+                    where=where_filter,
+                    include=["documents", "metadatas", "distances"]
+                )
+
+            all_data = await asyncio.to_thread(_do_metadata_search)
+
             results = []
             seen_parent_ids = set()
             for i in range(len(all_data["ids"])):
@@ -334,7 +344,7 @@ class HybridRetriever:
                     if parent_id in seen_parent_ids:
                         continue
                     seen_parent_ids.add(parent_id)
-                    parent_results = self.vector_store.get_by_parent(parent_id)
+                    parent_results = await asyncio.to_thread(self.vector_store.get_by_parent, parent_id)
                     if parent_results["documents"]:
                         results.append({
                             "child_id": all_data["ids"][i],
