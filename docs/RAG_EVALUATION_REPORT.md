@@ -181,4 +181,44 @@
 
 ---
 
+## 8. 改进计划与实施
+
+### Phase 1: 性能优化 (已完成 ✅)
+
+| 改进项 | 配置变更 | 效果预期 |
+|--------|----------|----------|
+| **语义缓存** | LRU cache (256 entries, cosine >0.95) | 重复查询延迟降至 <100ms |
+| **RECALL_MULTIPLIER** | 8 → 12 | 召回通道扩大 50%，提升 CR |
+| **RRF_K** | 40 → 20 | 更sharp的rank权重，提升 NDCG |
+
+### Phase 2: 生成质量优化 (已完成 ✅)
+
+| 改进项 | 变更内容 | 效果预期 |
+|--------|----------|----------|
+| **表格数据忠实度** | 系统提示增加规则：表格数据必须核实，严禁编造 | F 分数提升 |
+| **跨语言检索增强** | 新增 RTO/RPO/Pod/failover/RBAC 等术语pattern | Q3/Q8 NDCG 提升 |
+
+### Phase 3: 待实施
+
+- [ ] 重新跑评估验证改进效果
+- [ ] 根据新结果调整参数
+- [ ] 更新最终报告
+
+---
+
+## 9. 配置变更记录
+
+```env
+# backend/.env
+RECALL_MULTIPLIER=12    # 8 → 12 (扩大召回)
+RRF_K=20                # 40 → 20 (更sharp排名)
+```
+
+**变更文件**:
+- `backend/src/core/config.py`: RECALL_MULTIPLIER=12, RRF_K=20
+- `backend/src/core/llm/minimax.py`: Response cache + 表格验证提示
+- `backend/src/core/retriever/query_rewriter.py`: 跨语言patterns扩展
+
+---
+
 **测试脚本**: `tests/test_rag_evaluation_full.py`
