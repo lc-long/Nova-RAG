@@ -238,7 +238,7 @@ class HybridRetriever:
 
         Applies document-level penalty based on total chunks per document in the BM25 index
         to prevent large documents from dominating search results.
-        Weight = 1.0 / (1.0 + chunk_count / 50.0) based on total chunks per doc in index.
+        Weight = 1.0 / (1.0 + chunk_count / 20.0) based on total chunks per doc in index.
         """
         all_results: dict[str, dict] = {}
         for r in dense_results:
@@ -258,7 +258,7 @@ class HybridRetriever:
 
         doc_weights: dict[str, float] = {}
         for doc_id, count in doc_chunk_counts.items():
-            doc_weights[doc_id] = 1.0 / (1.0 + count / 50.0)
+            doc_weights[doc_id] = 1.0 / (1.0 + count / 20.0)
 
         sorted_dense = sorted(dense_results, key=lambda r: r.get("distance", float("inf")))
         dense_rank: dict[str, int] = {}

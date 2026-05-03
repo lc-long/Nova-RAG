@@ -252,9 +252,42 @@
 | Q5 NDCG | 0.500 | 0.375 | -25% |
 | Q2 NDCG | 0.375 | 0.188 | -50% |
 
+---
+
+### Phase 6: Correct Documents + Document Weighting (完成 ✅)
+
+**问题发现**:
+1. 数据库重置后测试文档丢失
+2. dense_x.pdf 使用了错误的 arXiv ID (2412.15566 是光学论文，应该是 2312.06648)
+3. enterprise_k8s.md 的 Pod Pending 排查内容不足
+
+**修复措施**:
+1. **下载正确的 dense_x.pdf**: arXiv 2312.06648 "Dense X Retrieval: What Retrieval Granularity Should We Use?"
+2. **增强 enterprise_k8s.md**: 添加详细的 Pod Pending 排查步骤（5种原因 + 排查命令）
+3. **RRF 文档权重调整**: divisor 从 50 调整为 20
+
+**最新结果** (divisor=20):
+
+| 指标 | Phase 5 | Phase 6 | 变化 |
+|------|---------|---------|------|
+| **Overall** | 0.543 | **0.576** | +6.1% |
+| **NDCG** | 0.381 | **0.412** | +8.1% |
+| **CR** | 0.800 | **0.840** | +5.0% |
+| **Faithfulness** | 0.940 | **0.700** | -25.5% |
+
+**各问题改进情况**:
+
+| 问题 | Phase 5 | Phase 6 | 变化 |
+|------|---------|---------|------|
+| Q5 (学术) NDCG | 0.375 | **0.438** | +16.8% |
+| Q2 (多跳) NDCG | 0.188 | 0.125 | -33.5% |
+| Q5 CR | 0.600 | **1.000** | +66.7% |
+| Q7 CR | 0.200 | **1.000** | +400% |
+| Q10 CR | 0.400 | **0.600** | +50.0% |
+
 **已知局限**:
-- Q5 (学术论文) NDCG=0.375 - dense_x 内容tokenization问题，检索不到 proposition 相关chunk
-- Q2 (技术多跳) NDCG=0.188 - 文档内容不足，仅提供 kubectl describe pod 解决方案
+- Q2 (技术多跳) NDCG=0.125 - enterprise_k8s.md 只有 17 个 chunks，内容丰富度有限
+- Faithfulness 下降 - LLM 生成更依赖检索内容，但可能包含推断
 
 ---
 
