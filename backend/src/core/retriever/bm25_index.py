@@ -121,9 +121,8 @@ class BM25Indexer:
             scores = bm25_model.get_scores(query_tokens)
             chunk_ids = idx_data["chunk_ids"]
             for chunk_id, score in zip(chunk_ids, scores):
-                if score > 0:
-                    if chunk_id not in all_results or score > all_results[chunk_id]:
-                        all_results[chunk_id] = score
+                if chunk_id not in all_results or score > all_results[chunk_id]:
+                    all_results[chunk_id] = score
 
         sorted_results = sorted(all_results.items(), key=lambda x: x[1], reverse=True)
         return sorted_results[:top_k]
