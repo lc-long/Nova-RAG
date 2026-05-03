@@ -211,19 +211,23 @@ class HybridRetriever:
                     chunk_best_score[chunk_id] = score
 
         sorted_results = sorted(chunk_best_score.items(), key=lambda x: x[1], reverse=True)
+        chunk_ids = [chunk_id for chunk_id, _ in sorted_results[:top_k]]
+        metadata_map = await asyncio.to_thread(self.vector_store.get_metadata_by_ids, chunk_ids)
 
         sparse_results = []
         for chunk_id, bm25_score in sorted_results[:top_k]:
             content = self.bm25_indexer.chunk_id_to_content.get(chunk_id, "")
             result_doc_id = self.bm25_indexer.chunk_id_to_doc.get(chunk_id, "")
+            chunk_meta = metadata_map.get(chunk_id, {})
             sparse_results.append({
                 "child_id": None,
                 "parent_id": chunk_id,
                 "child_content": "",
                 "parent_content": content,
                 "doc_id": result_doc_id,
-                "page_number": 0,
+                "page_number": chunk_meta.get("page_number", 0),
                 "bm25_score": bm25_score,
+                "metadata_": chunk_meta,
             })
 
         return sparse_results
@@ -334,6 +338,7 @@ class HybridRetriever:
                 "doc_id": metadata["doc_id"],
                 "page_number": metadata.get("page_number", 0),
                 "distance": distance,
+                "metadata_": metadata,
             }
         else:
             return {
@@ -343,6 +348,7 @@ class HybridRetriever:
                 "doc_id": metadata["doc_id"],
                 "page_number": metadata.get("page_number", 0),
                 "distance": distance,
+                "metadata_": metadata,
             }
 
     async def _resolve_parent_content(self, chunks: list[dict]) -> list[dict]:
@@ -373,6 +379,7 @@ class HybridRetriever:
                         "doc_id": r["doc_id"],
                         "page_number": r["page_number"],
                         "distance": r["distance"],
+                        "metadata_": r.get("metadata_", {}),
                     })
             else:
                 resolved.append({
@@ -381,6 +388,7 @@ class HybridRetriever:
                     "doc_id": r["doc_id"],
                     "page_number": r["page_number"],
                     "distance": r["distance"],
+                    "metadata_": r.get("metadata_", {}),
                 })
 
         return resolved
@@ -453,6 +461,7 @@ class HybridRetriever:
                             "doc_id": row.doc_id,
                             "page_number": meta.get("page_number", 0),
                             "distance": 0.0,
+                            "metadata_": meta,
                         })
                 else:
                     results.append({
@@ -461,6 +470,7 @@ class HybridRetriever:
                         "doc_id": row.doc_id,
                         "page_number": meta.get("page_number", 0),
                         "distance": 0.0,
+                        "metadata_": meta,
                     })
             return results[:top_k]
         except Exception as e:

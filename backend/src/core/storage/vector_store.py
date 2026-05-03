@@ -152,6 +152,25 @@ class VectorStore:
         finally:
             session.close()
 
+    def get_metadata_by_ids(self, chunk_ids: list[str]) -> dict[str, dict]:
+        """Get metadata for multiple chunks by their IDs. Returns dict of chunk_id -> metadata."""
+        session = SessionLocal()
+        try:
+            rows = session.query(DocumentChunk).filter(
+                DocumentChunk.id.in_(chunk_ids)
+            ).all()
+            result = {}
+            for row in rows:
+                result[row.id] = {
+                    "page_number": (row.metadata_ or {}).get("page_number", 0),
+                    "order": (row.metadata_ or {}).get("order", 0),
+                    "source": (row.metadata_ or {}).get("source", ""),
+                    "heading_path": (row.metadata_ or {}).get("heading_path", ""),
+                }
+            return result
+        finally:
+            session.close()
+
     def delete_by_doc_id(self, doc_id: str) -> int:
         """Delete all chunks belonging to a document. Returns count of deleted chunks."""
         session = SessionLocal()

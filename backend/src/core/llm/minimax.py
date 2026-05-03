@@ -405,11 +405,25 @@ class MinimaxClient:
     def _build_references(self, chunks: list[dict]) -> list[dict]:
         references = []
         for i, chunk in enumerate(chunks, 1):
+            distance = chunk.get("distance", 1.0)
+            vector_score = 1.0 - distance if distance <= 1.0 else 0.5
+            bm25_score = chunk.get("bm25_score", 0.0)
+            rerank_score = chunk.get("rerank_score", 0.0)
+            combined_score = 0.7 * vector_score + 0.3 * (bm25_score / 10.0) if bm25_score else vector_score
+            if rerank_score > 0:
+                combined_score = rerank_score
+            metadata = chunk.get("metadata_", {}) or {}
             references.append({
                 "index": i,
                 "doc_id": chunk.get("doc_id", "Unknown"),
-                "source_doc": chunk.get("doc_id", "Unknown"),
+                "source_doc": metadata.get("source", chunk.get("doc_id", "Unknown")),
                 "page_number": chunk.get("page_number", 0),
-                "content": chunk.get("parent_content", "")[:200]
+                "content": chunk.get("parent_content", "")[:200],
+                "score": round(combined_score, 3),
+                "score_type": "rerank" if rerank_score > 0 else ("combined" if bm25_score else "vector"),
+                "vector_score": round(vector_score, 3),
+                "bm25_score": round(bm25_score, 3) if bm25_score else None,
+                "chunk_index": metadata.get("order", i),
+                "parent_chunk_index": chunk.get("parent_id", ""),
             })
         return references
