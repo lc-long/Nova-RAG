@@ -68,8 +68,10 @@ async def score_answer_with_llm(question: str, answer: str, chunks: list) -> dic
     """Use LLM to score the answer quality (CR, AR, F)."""
     import httpx
     import re
-    api_key = os.getenv("MINIMAX_API_KEY", "")
-    base_url = "https://api.minimaxi.com/v1"
+
+    # Use DeepSeek for scoring (MiniMax may be rate-limited)
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    base_url = "https://api.deepseek.com/v1"
 
     if not api_key:
         return {"cr": 0.0, "ar": 0.0, "f": 0.0, "error": "No API key"}
@@ -86,9 +88,9 @@ async def score_answer_with_llm(question: str, answer: str, chunks: list) -> dic
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 resp = await client.post(
-                    f"{base_url}/text/chatcompletion_v2",
+                    f"{base_url}/chat/completions",
                     headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
-                    json={"model": "MiniMax-M2.7", "messages": [{"role": "user", "content": prompt}], "stream": False}
+                    json={"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "stream": False}
                 )
                 if resp.status_code == 200:
                     content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "").strip()
