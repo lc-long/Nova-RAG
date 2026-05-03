@@ -134,7 +134,6 @@ class QueryRewriter:
             ("dev", ["开发环境", "development", "开发", "dev environment"]),
             ("RBAC", ["基于角色的访问控制", "role based access", "权限控制", "access control"]),
             ("quota", ["配额", "resource quota", "资源限制", "限额"]),
-        ]
             ("multi-region", ["多区域部署", "跨区域", "multi region", "多区域", "跨地域"]),
             ("failover", ["故障切换", "失效转移", "灾难恢复", "fail over", "failover mechanism"]),
             ("zone", ["可用区", "zone", "az", "availability zone", "区域"]),
