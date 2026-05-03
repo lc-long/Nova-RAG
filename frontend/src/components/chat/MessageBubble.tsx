@@ -26,6 +26,8 @@ export function MessageBubble({ msg, onCite }: MessageBubbleProps) {
   const isStreaming = msg.reasoning && !msg.content
   const isThinking = msg.thoughts.length > 0 && !msg.content
 
+  const refMap = new Map(msg.references?.map(r => [r.index, r]) ?? [])
+
   return (
     <div className="space-y-2.5 max-w-xl">
       <ThoughtPanel thoughts={msg.thoughts} isStreaming={isThinking} />
@@ -40,7 +42,7 @@ export function MessageBubble({ msg, onCite }: MessageBubbleProps) {
           <div className="prose prose-sm max-w-none text-[var(--color-text-primary)] whitespace-pre-wrap
                         leading-relaxed prose-custom
                         [&_a]:text-[var(--color-accent)] [&_a]:hover:text-[var(--color-accent-hover)]">
-            {renderWithCitations(msg.content, onCite)}
+            {renderWithCitations(msg.content, onCite, refMap)}
           </div>
         </div>
       )}
@@ -48,11 +50,18 @@ export function MessageBubble({ msg, onCite }: MessageBubbleProps) {
   )
 }
 
-function renderWithCitations(text: string, onCite: (index: number) => void): React.ReactNode {
+function renderWithCitations(
+  text: string,
+  onCite: (index: number) => void,
+  refMap: Map<number, import('../../types').Reference>
+): React.ReactNode {
   const parts = text.split(/(\[\d+\])/g)
   return parts.map((part, i) => {
     const match = part.match(/^\[(\d+)\]$/)
-    if (match) return <CitationBadge key={i} index={parseInt(match[1])} onClick={() => onCite(parseInt(match[1]))} />
+    if (match) {
+      const idx = parseInt(match[1])
+      return <CitationBadge key={i} index={idx} onClick={() => onCite(idx)} reference={refMap.get(idx)} />
+    }
     return <span key={i}>{part}</span>
   })
 }
