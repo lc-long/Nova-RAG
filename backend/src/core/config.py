@@ -17,9 +17,9 @@ EMBED_BATCH_SLEEP = float(os.getenv("EMBED_BATCH_SLEEP", "0.1"))
 EMBED_MAX_TEXT_CHARS = int(os.getenv("EMBED_MAX_TEXT_CHARS", "6000"))
 
 # --- Retriever ---
-RECALL_MULTIPLIER = int(os.getenv("RECALL_MULTIPLIER", "12"))
+RECALL_MULTIPLIER = int(os.getenv("RECALL_MULTIPLIER", "15"))
 RETRIEVER_TOP_K = int(os.getenv("RETRIEVER_TOP_K", "8"))
-RRF_K = int(os.getenv("RRF_K", "20"))
+RRF_K = int(os.getenv("RRF_K", "60"))
 MISSING_RANK = int(os.getenv("MISSING_RANK", "1000"))
 DISTANCE_THRESHOLD = float(os.getenv("DISTANCE_THRESHOLD", "10.0"))
 
