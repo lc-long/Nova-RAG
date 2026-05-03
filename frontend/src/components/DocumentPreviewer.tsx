@@ -3,8 +3,9 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import DOMPurify from 'dompurify'
 import mammoth from 'mammoth'
-import { X, Loader2, FileText, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut } from 'lucide-react'
+import { X, Loader2, FileText, Download, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Highlighter } from 'lucide-react'
 import { API_BASE_URL } from '../config'
+import type { ChunkPosition } from '../types'
 
 const API_BASE = API_BASE_URL
 
@@ -13,11 +14,20 @@ interface PreviewData {
   name: string
   status: string
   content: string
+  chunks?: ChunkPosition[]
+}
+
+interface HighlightRange {
+  start: number
+  end: number
+  citationIndex: number
 }
 
 interface Props {
   docId: string
   onClose: () => void
+  highlightRanges?: HighlightRange[]
+  onHighlightClick?: (citationIndex: number) => void
 }
 
 function getFileExtension(name: string): string {
@@ -42,7 +52,12 @@ function fetchAsArrayBuffer(url: string): Promise<ArrayBuffer> {
 type RenderTask = { cancel: () => void }
 type PdfDoc = any
 
-export default function DocumentPreviewer({ docId, onClose }: Props) {
+export default function DocumentPreviewer({
+  docId,
+  onClose,
+  highlightRanges = [],
+  onHighlightClick
+}: Props) {
   const [data, setData] = useState<PreviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,6 +72,51 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
   const pdfDocRef = useRef<PdfDoc>(null)
   const renderingTaskRef = useRef<RenderTask | null>(null)
   const prevDocIdRef = useRef<string | null>(null)
+  const contentRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (highlightRanges.length > 0 && contentRef.current) {
+      const firstHighlight = highlightRanges[0]
+      const textNode = contentRef.current.querySelector(`[data-pos="${firstHighlight.start}"]`)
+      if (textNode) {
+        textNode.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+    }
+  }, [highlightRanges])
+
+  const renderHighlightedContent = useCallback((content: string) => {
+    if (highlightRanges.length === 0) {
+      return <span>{content}</span>
+    }
+
+    const sortedRanges = [...highlightRanges].sort((a, b) => a.start - b.start)
+    const result: React.ReactNode[] = []
+    let lastEnd = 0
+
+    sortedRanges.forEach((range, idx) => {
+      if (range.start > lastEnd) {
+        result.push(<span key={`text-${idx}`}>{content.slice(lastEnd, range.start)}</span>)
+      }
+      result.push(
+        <mark
+          key={`highlight-${idx}`}
+          data-pos={range.start}
+          className="bg-yellow-200 dark:bg-yellow-800/50 rounded px-0.5 cursor-pointer hover:bg-yellow-300 dark:hover:bg-yellow-700/50 transition-colors"
+          onClick={() => onHighlightClick?.(range.citationIndex)}
+          title={`引用 [${range.citationIndex}] - 点击查看详情`}
+        >
+          {content.slice(range.start, range.end)}
+        </mark>
+      )
+      lastEnd = range.end
+    })
+
+    if (lastEnd < content.length) {
+      result.push(<span key="text-end">{content.slice(lastEnd)}</span>)
+    }
+
+    return <>{result}</>
+  }, [highlightRanges, onHighlightClick])
 
   useEffect(() => {
     if (prevDocIdRef.current === docId) return
@@ -175,6 +235,14 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
               {statusConfig[data.status as keyof typeof statusConfig].label}
             </span>
           )}
+          {highlightRanges.length > 0 && (
+            <span className="shrink-0 flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full
+                           font-medium bg-yellow-50 text-yellow-700 dark:bg-yellow-950/30 dark:text-yellow-400
+                           border border-yellow-200 dark:border-yellow-800">
+              <Highlighter className="w-3 h-3" />
+              {highlightRanges.length} 处高亮
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-1 shrink-0">
           {data && (
@@ -271,17 +339,24 @@ export default function DocumentPreviewer({ docId, onClose }: Props) {
             </div>
           )
         ) : isMd && data?.content ? (
-          <div className="h-full overflow-y-auto p-6 md:p-8">
-            <div className="prose prose-sm md:prose-base max-w-none text-[var(--color-text-secondary)]
-                          leading-relaxed whitespace-pre-wrap break-words">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
-            </div>
+          <div className="h-full overflow-y-auto p-6 md:p-8" ref={contentRef}>
+            {highlightRanges.length > 0 ? (
+              <div className="prose prose-sm md:prose-base max-w-none text-[var(--color-text-secondary)]
+                            leading-relaxed whitespace-pre-wrap break-words">
+                {renderHighlightedContent(data.content)}
+              </div>
+            ) : (
+              <div className="prose prose-sm md:prose-base max-w-none text-[var(--color-text-secondary)]
+                            leading-relaxed whitespace-pre-wrap break-words">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{data.content}</ReactMarkdown>
+              </div>
+            )}
           </div>
         ) : (isTxt || isCsv) && data?.content ? (
-          <div className="h-full overflow-y-auto p-6 md:p-8">
+          <div className="h-full overflow-y-auto p-6 md:p-8" ref={contentRef}>
             <pre className="whitespace-pre-wrap break-words font-mono text-sm
                           text-[var(--color-text-secondary)] leading-relaxed">
-              {data.content}
+              {renderHighlightedContent(data.content)}
             </pre>
           </div>
         ) : (

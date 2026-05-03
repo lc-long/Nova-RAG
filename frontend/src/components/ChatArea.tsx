@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import toast from 'react-hot-toast'
+import axios from 'axios'
 import {
   Send, Bot, User, Loader2, Globe, FileText, Trash2, Download,
   Search, Wand2, X
@@ -12,6 +13,7 @@ import { SourceCard } from './chat/SourceCard'
 import { SourceModal } from './chat/SourceModal'
 import { MentionPopover, MentionTags } from './chat/MentionPopover'
 import { RAGMetricsPanel } from './chat/RAGMetricsPanel'
+import { API_BASE_URL } from '../config'
 
 const STORAGE_KEY = 'nova_chat_history'
 
@@ -76,6 +78,26 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
     if (!msg.references) return
     const ref = msg.references.find(r => r.index === index)
     if (ref) setModalRef(ref)
+  }
+
+  const handleCitationRate = async (citation: Reference, helpful: boolean) => {
+    if (!conversationId) {
+      toast.error('请先创建会话')
+      return
+    }
+    try {
+      await axios.post(`${API_BASE_URL}/citations/feedback`, {
+        helpful,
+        conversation_id: conversationId,
+        query: messages.find(m => m.references?.some(r => r.index === citation.index))?.content || '',
+        citation_index: citation.index,
+        doc_id: citation.doc_id,
+        content: citation.content,
+      })
+      toast.success(helpful ? '感谢反馈' : '已记录')
+    } catch {
+      toast.error('反馈失败')
+    }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -244,7 +266,10 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
                     : <Bot className="w-4 h-4 text-[var(--color-text-secondary)]" />}
                 </div>
                 <div className="max-w-2xl">
-                  <MessageBubble msg={msg} onCite={(idx) => handleCitationClick(msg, idx)} />
+                  <MessageBubble
+                    msg={msg}
+                    onCite={(idx) => handleCitationClick(msg, idx)}
+                  />
                   {msg.references && msg.references.length > 0 && (
                     <div className="mt-3">
                       <div className="flex items-center gap-2 mb-2">
@@ -265,6 +290,8 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
                               setModalRef(ref)
                               onPreview?.(ref.doc_id)
                             }}
+                            showRating={true}
+                            onRate={(helpful) => handleCitationRate(ref, helpful)}
                           />
                         ))}
                       </div>
@@ -337,7 +364,13 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
         </div>
       </form>
 
-      {modalRef && <SourceModal reference={modalRef} onClose={() => setModalRef(null)} />}
+      {modalRef && (
+        <SourceModal
+          reference={modalRef}
+          onClose={() => setModalRef(null)}
+          onRate={(helpful) => handleCitationRate(modalRef, helpful)}
+        />
+      )}
     </main>
   )
 }
