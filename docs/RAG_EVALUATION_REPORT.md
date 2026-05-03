@@ -200,25 +200,25 @@
 
 ### Phase 3: Re-evaluation completed
 
-**重新评估结果对比**：
+**第二次评估结果对比** (RECALL=15, RRF_K=60):
 
-| 指标 | 改进前 | 改进后 | 变化 |
-|------|--------|--------|------|
-| **Overall** | 0.469 | **0.485** | +0.016 |
-| **NDCG** | 0.412 | 0.412 | - |
-| **CR** | 0.520 | 0.520 | - |
-| **Faithfulness** | 0.480 | **0.520** | +0.040 |
-| **Avg Latency** | 15,582ms | **13,195ms** | -15.3% |
+| 指标 | 初始 | Round 1 | Round 2 | 变化 |
+|------|------|---------|---------|------|
+| **Overall** | 0.469 | 0.485 | **0.507** | +0.038 |
+| **NDCG** | 0.412 | 0.412 | **0.419** | +0.007 |
+| **CR** | 0.520 | 0.520 | **0.640** | +0.120 |
+| **Faithfulness** | 0.480 | 0.520 | **0.540** | +0.060 |
+| **Avg Latency** | 15,582ms | 13,195ms | 17,523ms | +2,328ms |
 
-**主要改善**：
-- Faithfulness 从 0.48 提升到 0.52 (+8.3%)
-- 平均延迟从 15.6s 降至 13.2s (-15.3%)
-- Q4 表格数据 F=0.20→0.40，Q5 学术论文 CR=0.20→1.00
+**主要改善**:
+- CR 大幅提升 0.52→0.64 (+23%)，Q9 CR=0.0→1.0 (修复)
+- Q4 CR: 0.4→0.8, Q2 CR: 0.6→0.8
+- Q1 NDCG: 0.375→0.500, P@8: 0.75→1.00
 
-**待继续优化**：
-- Q9 (Alert Monitoring) CR=0.0（异常，需排查）
-- Q8 (Permission/Security) CR=0.2 仍然偏低
-- NDCG 未见提升，检索优化效果待验证
+**Regression 待修复**:
+- Q10 NDCG: 0.438→0.312 (RRF_K=60 太温柔，高排名优势被稀释)
+- Q6 NDCG: 0.375→0.250
+- 延迟增加 2.3s (RRF_K 增大导致更多结果参与排序)
 
 ---
 
@@ -226,12 +226,12 @@
 
 ```env
 # backend/.env
-RECALL_MULTIPLIER=12    # 8 → 12 (扩大召回)
-RRF_K=20                # 40 → 20 (更sharp排名)
+RECALL_MULTIPLIER=15    # 8 → 12 → 15 (扩大召回覆盖)
+RRF_K=60               # 40 → 20 → 60 (平衡dense/sparse)
 ```
 
 **变更文件**:
-- `backend/src/core/config.py`: RECALL_MULTIPLIER=12, RRF_K=20
+- `backend/src/core/config.py`: RECALL_MULTIPLIER=15, RRF_K=60
 - `backend/src/core/llm/minimax.py`: Response cache + 表格验证提示
 - `backend/src/core/retriever/query_rewriter.py`: 跨语言patterns扩展
 
