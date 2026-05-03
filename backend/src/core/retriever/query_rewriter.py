@@ -128,10 +128,21 @@ class QueryRewriter:
             ("API Gateway", ["api网关", "网关", "API gateway"]),
             ("Developer", ["开发者", "开发人员", "dev"]),
             ("告警", ["alert", "警报", "报警"]),
-            ("role", ["角色", "角色权限", "RBAC", "role-based"]),
-            ("namespace", ["命名空间", "namespace", "ns"]),
-            ("production", ["生产环境", "prod", "生产"]),
-            ("dev", ["开发环境", "development", "开发"]),
+            ("role", ["角色", "角色权限", "RBAC", "role-based", "角色定义"]),
+            ("namespace", ["命名空间", "namespace", "ns", "命名"]),
+            ("production", ["生产环境", "prod", "生产", "production environment"]),
+            ("dev", ["开发环境", "development", "开发", "dev environment"]),
+            ("RBAC", ["基于角色的访问控制", "role based access", "权限控制", "access control"]),
+            ("quota", ["配额", "resource quota", "资源限制", "限额"]),
+        ]
+            ("multi-region", ["多区域部署", "跨区域", "multi region", "多区域", "跨地域"]),
+            ("failover", ["故障切换", "失效转移", "灾难恢复", "fail over", "failover mechanism"]),
+            ("zone", ["可用区", "zone", "az", "availability zone", "区域"]),
+            ("deployment", ["部署", "发布", "上线", "deploy", "rollout"]),
+            ("region", ["区域", "地区", "region", "地域"]),
+            ("primary", ["主", "主要", "primary", "master", "主节点"]),
+            ("replica", ["副本", "从", "replica", "slave", "副本节点"]),
+            ("standby", ["备用", "待机", "standby", "backup", "备机"]),
         ]
         if not QUERY_PATTERNS_FILE:
             return default

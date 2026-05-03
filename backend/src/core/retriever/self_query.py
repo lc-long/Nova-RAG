@@ -38,32 +38,35 @@ class SelfQueryResult:
     raw_llm_response: str = ""
 
 
-SYSTEM_PROMPT = """你是一个查询解析专家。用户的问题中可能隐含了文档筛选条件，请提取出来。
+SYSTEM_PROMPT = """You are a query parsing expert. Extract document filtering conditions from user queries.
 
-输出JSON格式：
+Output JSON format:
 {
-  "semantic_query": "去掉筛选条件后的核心问题",
-  "doc_name": "文档名称关键词（如果有）",
-  "page_range": [起始页, 结束页] 或 null
+  "semantic_query": "core question without filters",
+  "doc_name": "document name keyword (if any)",
+  "page_range": [start_page, end_page] or null
 }
 
-示例：
-用户："2025年鸭鸭的用户报告里说了什么"
+Examples:
+User: "2025年鸭鸭的用户报告"
 → {"semantic_query": "用户报告内容", "doc_name": "鸭鸭", "page_range": null}
 
-用户："第3页的图表是什么意思"
+User: "第3页的图表是什么意思"
 → {"semantic_query": "图表是什么意思", "doc_name": null, "page_range": [3, 3]}
 
-用户："nova tech文档中的架构图"
+User: "nova tech文档中的架构图"
 → {"semantic_query": "架构图", "doc_name": "nova tech", "page_range": null}
 
-用户："解释一下饼状图"
-→ {"semantic_query": "解释一下饼状图", "doc_name": null, "page_range": null}
+User: "explain the multi-region deployment"
+→ {"semantic_query": "multi-region deployment architecture", "doc_name": null, "page_range": null}
 
-注意：
-- 只提取用户明确提到的筛选条件
-- 如果用户没有提到任何筛选条件，doc_name和page_range都设为null
-- semantic_query保留用户的完整意图，不要过度精简"""
+User: "what happens when one zone goes down?"
+→ {"semantic_query": "zone failure failover mechanism", "doc_name": null, "page_range": null}
+
+Note:
+- Only extract conditions explicitly mentioned by user
+- If no filters mentioned, set doc_name and page_range to null
+- semantic_query should preserve full user intent"""
 
 
 class SelfQueryRetriever:
