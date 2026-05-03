@@ -25,7 +25,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         ? (mediaQuery.matches ? 'dark' : 'light')
         : theme
       setResolvedTheme(resolved)
-      document.documentElement.classList.toggle('dark', resolved === 'dark')
+      document.documentElement.classList.remove('light', 'dark')
+      if (theme !== 'system') {
+        document.documentElement.classList.add(resolved)
+      }
     }
 
     updateResolvedTheme()
