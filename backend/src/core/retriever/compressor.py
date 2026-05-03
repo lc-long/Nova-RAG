@@ -123,6 +123,13 @@ def compress_chunks(chunks: list[dict], query: str, max_tokens: int = 6000) -> l
                 total_chars += len(content)
             continue
 
+        # Table data content (structured), keep as-is to preserve data integrity
+        if '--- 表格数据开始 ---' in content or '--- 表格结束 ---' in content:
+            if total_chars + len(content) <= max_chars:
+                compressed.append(chunk)
+                total_chars += len(content)
+            continue
+
         # Split into sentences
         sentences = _split_sentences(content)
         if len(sentences) <= 3:

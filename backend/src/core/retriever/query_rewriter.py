@@ -128,6 +128,15 @@ class QueryRewriter:
             ("API Gateway", ["api网关", "网关", "API gateway"]),
             ("Developer", ["开发者", "开发人员", "dev"]),
             ("告警", ["alert", "警报", "报警"]),
+            ("role", ["角色", "角色权限", "RBAC", "role-based"]),
+            ("namespace", ["命名空间", "namespace", "ns"]),
+            ("production", ["生产环境", "prod", "生产"]),
+            ("dev", ["开发环境", "development", "开发"]),
+            ("Q2", ["第二季度", "Q2", "二季度"]),
+            ("Q3", ["第三季度", "Q3", "三季度"]),
+            ("region", ["地区", "区域", "region", "地区名称"]),
+            ("sales", ["销售额", "销量", "sales", "营收"]),
+            ("下降", ["减少", "下滑", "decrease", "drop", "fall"]),
         ]
         if not QUERY_PATTERNS_FILE:
             return default
