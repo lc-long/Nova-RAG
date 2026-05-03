@@ -215,9 +215,46 @@
 3. **Faithfulness 强化** (minimax.py): 严格归因 + 禁止推断规则
 4. **RBAC 术语扩展**: quota, RBAC, namespace, production
 
+---
+
+### Phase 5: BM25 Index & Document Weighting (完成 ✅)
+
+**问题发现**:
+1. enterprise_k8s.md 和 sales_data.csv 的 chunks 未被正确添加到 BM25 索引
+2. dense_x.pdf 有 320 个 chunks（占 BM25 索引的 93%），导致它主导所有搜索结果
+
+**修复措施**:
+1. **BM25 负分数过滤移除** (bm25_index.py): 移除 `if score > 0` 过滤，允许负分数结果
+2. **dense_x.pdf 重新上传**: 恢复 Q5 所需的学术论文内容
+3. **RRF 文档级别权重**: 添加基于文档 chunk 数量的惩罚权重
+   - 公式: `weight = 1.0 / (1.0 + chunk_count / 50.0)`
+   - dense_x (320 chunks): weight = 0.135
+   - enterprise_k8s (17 chunks): weight = 0.75
+   - sales_data (2 chunks): weight = 0.96
+
+**最新结果**:
+
+| 指标 | Phase 4 | Phase 5 | 变化 |
+|------|---------|---------|------|
+| **Overall** | 0.617 | **0.558** | -9.6% |
+| **NDCG** | 0.431 | **0.381** | -11.6% |
+| **CR** | 0.740 | **0.800** | +8.1% |
+| **Faithfulness** | 0.760 | **0.940** | +23.7% |
+
+**各问题改进情况**:
+
+| 问题 | Phase 4 | Phase 5 | 变化 |
+|------|---------|---------|------|
+| Q4 (表格) CR | 0.200 | **1.000** | +400% |
+| Q7 (端口) CR | 0.200 | **1.000** | +400% |
+| Q8 (RBAC) CR | 0.400 | **1.000** | +150% |
+| Q10 CR | 0.200 | **0.800** | +300% |
+| Q5 NDCG | 0.500 | 0.375 | -25% |
+| Q2 NDCG | 0.375 | 0.188 | -50% |
+
 **已知局限**:
-- Q10 NDCG=0.250 (英文多区域部署内容检索 - 需优化文档结构)
-- Q4 CR=0.200 (表格数据检索 - chunk问题)
+- Q5 (学术论文) NDCG=0.375 - dense_x 内容tokenization问题，检索不到 proposition 相关chunk
+- Q2 (技术多跳) NDCG=0.188 - 文档内容不足，仅提供 kubectl describe pod 解决方案
 
 ---
 
