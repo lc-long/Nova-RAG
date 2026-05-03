@@ -21,7 +21,7 @@ import uvicorn
 from .components import create_components
 from .database import Base, engine
 from ..core.storage.vector_store import init_pgvector
-from .routes import docs, chat, conversations
+from .routes import docs, chat, conversations, citations
 
 logger = logging.getLogger("nova_rag")
 
@@ -59,6 +59,7 @@ async def health_check():
 app.include_router(docs.router, prefix="/api/v1")
 app.include_router(chat.router, prefix="/api/v1")
 app.include_router(conversations.router, prefix="/api/v1")
+app.include_router(citations.router, prefix="/api/v1")
 
 
 if __name__ == "__main__":

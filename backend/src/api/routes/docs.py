@@ -227,19 +227,37 @@ async def get_document_content(doc_id: str, db: Session = Depends(get_db)):
     chunks.sort(key=sort_key)
 
     full_text = ""
-    for c in chunks:
+    chunk_positions = []
+    current_pos = 0
+
+    for idx, c in enumerate(chunks):
         text = c.content
         if text.startswith("[来源文件："):
-            idx = text.find("]\n")
-            if idx != -1:
-                text = text[idx + 2:]
+            idx_marker = text.find("]\n")
+            if idx_marker != -1:
+                text = text[idx_marker + 2:]
+        start_pos = current_pos
         full_text += text + "\n\n"
+        end_pos = current_pos + len(text)
+        current_pos = end_pos + 2
+
+        meta = c.metadata_ or {}
+        chunk_positions.append({
+            "index": idx,
+            "chunk_id": c.id,
+            "content": text,
+            "start_pos": start_pos,
+            "end_pos": end_pos,
+            "order": meta.get("order", idx),
+            "page_number": meta.get("page_number", 0),
+        })
 
     return {
         "doc_id": doc_id,
         "name": doc.name,
         "status": doc.status,
         "content": full_text.strip(),
+        "chunks": chunk_positions,
     }
 
 
