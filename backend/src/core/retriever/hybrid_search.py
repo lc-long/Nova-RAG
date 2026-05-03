@@ -234,7 +234,32 @@ class HybridRetriever:
         sparse_results: list[dict],
         top_k: int
     ) -> list[dict]:
-        """Reciprocal Rank Fusion using rank-based scoring."""
+        """Reciprocal Rank Fusion using rank-based scoring with document-level weighting.
+
+        Applies document-level penalty based on total chunks per document in the BM25 index
+        to prevent large documents from dominating search results.
+        Weight = 1.0 / (1.0 + chunk_count / 50.0) based on total chunks per doc in index.
+        """
+        all_results: dict[str, dict] = {}
+        for r in dense_results:
+            key = r.get("child_id") or r.get("parent_id")
+            if key:
+                all_results[key] = r
+        for r in sparse_results:
+            key = r.get("child_id") or r.get("parent_id")
+            if key:
+                if key not in all_results:
+                    all_results[key] = r
+
+        doc_chunk_counts: dict[str, int] = {}
+        if self.bm25_indexer:
+            for chunk_id, doc_id in self.bm25_indexer.chunk_id_to_doc.items():
+                doc_chunk_counts[doc_id] = doc_chunk_counts.get(doc_id, 0) + 1
+
+        doc_weights: dict[str, float] = {}
+        for doc_id, count in doc_chunk_counts.items():
+            doc_weights[doc_id] = 1.0 / (1.0 + count / 50.0)
+
         sorted_dense = sorted(dense_results, key=lambda r: r.get("distance", float("inf")))
         dense_rank: dict[str, int] = {}
         for rank, result in enumerate(sorted_dense, start=1):
@@ -255,7 +280,10 @@ class HybridRetriever:
         for key in all_keys:
             d_rank = dense_rank.get(key, MISSING_RANK)
             s_rank = sparse_rank.get(key, MISSING_RANK)
-            rrf_scores[key] = (1.0 / (self.rrf_k + d_rank)) + (1.0 / (self.rrf_k + s_rank))
+            rrf_raw = (1.0 / (self.rrf_k + d_rank)) + (1.0 / (self.rrf_k + s_rank))
+            doc_id = all_results.get(key, {}).get("doc_id", "")
+            weight = doc_weights.get(doc_id, 1.0)
+            rrf_scores[key] = rrf_raw * weight
 
         all_results: dict[str, dict] = {}
         for r in dense_results:
