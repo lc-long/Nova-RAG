@@ -19,6 +19,30 @@ export interface Reference {
   source_doc?: string
   page_number?: number
   content: string
+  score?: number
+  score_type?: 'vector' | 'bm25' | 'combined' | 'rerank'
+  vector_score?: number
+  bm25_score?: number | null
+  chunk_index?: number
+  parent_chunk_index?: string
+}
+
+export interface ChunkPosition {
+  index: number
+  chunk_id: string
+  content: string
+  start_pos: number
+  end_pos: number
+  order: number
+  page_number: number
+}
+
+export interface DocContent {
+  doc_id: string
+  name: string
+  status: string
+  content: string
+  chunks: ChunkPosition[]
 }
 
 export interface Message {
