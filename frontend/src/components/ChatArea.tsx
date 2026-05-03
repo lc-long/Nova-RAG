@@ -1,6 +1,9 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import toast from 'react-hot-toast'
-import { Send, Bot, User, Loader2, Globe, FileText, Trash2, Download } from 'lucide-react'
+import {
+  Send, Bot, User, Loader2, Globe, FileText, Trash2, Download,
+  Search, Wand2, X
+} from 'lucide-react'
 import type { DocItem, Reference } from '../types'
 import { useChat } from '../hooks/useChat'
 import { useAppStore } from '../store/useAppStore'
@@ -8,6 +11,7 @@ import { MessageBubble } from './chat/MessageBubble'
 import { SourceCard } from './chat/SourceCard'
 import { SourceModal } from './chat/SourceModal'
 import { MentionPopover, MentionTags } from './chat/MentionPopover'
+import { RAGMetricsPanel } from './chat/RAGMetricsPanel'
 
 const STORAGE_KEY = 'nova_chat_history'
 
@@ -17,7 +21,7 @@ interface ChatAreaProps {
 }
 
 export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
-  const { messages, sendMessage, clearMessages, exportMarkdown } = useChat()
+  const { messages, sendMessage, clearMessages, exportMarkdown, cancelStream } = useChat()
   const { currentDoc, conversationId, setMessages } = useAppStore()
 
   const [input, setInput] = useState('')
@@ -34,7 +38,6 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [])
 
-  // Load conversation messages when conversationId changes
   useEffect(() => {
     if (conversationId) {
       const { loadConversationMessages } = useAppStore.getState()
@@ -53,14 +56,15 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
     }
   }, [conversationId, setMessages])
 
-  // Persist to localStorage (only for unsaved new chats)
   useEffect(() => {
     if (!conversationId) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(messages)) } catch { /* ignore */ }
     }
   }, [messages, conversationId])
 
-  useEffect(() => { scrollToBottom() }, [messages.length, scrollToBottom])
+  useEffect(() => {
+    scrollToBottom()
+  }, [messages.length, scrollToBottom])
 
   const handleClearSession = () => {
     if (!window.confirm('确定要清空当前会话吗？')) return
@@ -74,7 +78,6 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
     if (ref) setModalRef(ref)
   }
 
-  // @ mention detection
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value
     setInput(val)
@@ -134,67 +137,139 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
   }
 
   return (
-    <main className="flex-1 flex flex-col bg-gray-50">
+    <main className="flex-1 flex flex-col bg-[var(--color-bg-primary)]
+                      border-l border-[var(--color-border)]">
       {messages.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <Bot className="w-16 h-16 text-indigo-300 mx-auto mb-4" />
-            <h2 className="text-xl font-semibold text-gray-700 mb-2">Nova-RAG 智能助手</h2>
-            <p className="text-gray-500">请从左侧选择一个文档开始对话，或直接上传新文档</p>
-            <p className="text-gray-400 text-sm mt-2">输入 @ 可指定文档进行精准检索</p>
+        <div className="flex-1 flex items-center justify-center p-8">
+          <div className="text-center max-w-md animate-fade-in">
+            <div className="w-16 h-16 mx-auto mb-5 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600
+                          flex items-center justify-center shadow-lg shadow-indigo-500/20">
+              <Bot className="w-8 h-8 text-white" />
+            </div>
+            <h2 className="text-xl font-semibold text-[var(--color-text-primary)] mb-2">
+              Nova-RAG 智能助手
+            </h2>
+            <p className="text-sm text-[var(--color-text-secondary)] mb-4">
+              基于检索增强生成的企业级知识库问答系统
+            </p>
+            <div className="flex flex-col gap-2 text-left bg-[var(--color-bg-secondary)]
+                          rounded-xl p-4 border border-[var(--color-border)]">
+              <div className="flex items-start gap-2 text-xs text-[var(--color-text-secondary)]">
+                <Search className="w-3.5 h-3.5 mt-0.5 text-[var(--color-accent)] shrink-0" />
+                <span><strong className="text-[var(--color-text-primary)]">@文档名</strong> 精准检索 - 在指定文档中搜索答案</span>
+              </div>
+              <div className="flex items-start gap-2 text-xs text-[var(--color-text-secondary)]">
+                <Globe className="w-3.5 h-3.5 mt-0.5 text-[var(--color-accent)] shrink-0" />
+                <span><strong className="text-[var(--color-text-primary)]">全局检索</strong> 跨所有文档进行语义搜索</span>
+              </div>
+              <div className="flex items-start gap-2 text-xs text-[var(--color-text-secondary)]">
+                <Wand2 className="w-3.5 h-3.5 mt-0.5 text-[var(--color-accent)] shrink-0" />
+                <span><strong className="text-[var(--color-text-primary)]">混合检索</strong> 向量 + BM25 + RRF 融合</span>
+              </div>
+            </div>
           </div>
         </div>
       ) : (
         <>
-          <div className="flex items-center justify-between px-6 pt-4">
-            <span className="text-sm text-gray-400">{messages.length} 条消息</span>
+          <div className="flex items-center justify-between px-5 pt-4 pb-2">
             <div className="flex items-center gap-3">
-              <div className="flex items-center bg-gray-100 rounded-lg p-1 gap-1">
+              <span className="text-xs text-[var(--color-text-muted)]">
+                {messages.length} 条消息
+              </span>
+              {streaming && (
+                <span className="flex items-center gap-1.5 text-xs text-[var(--color-accent)]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
+                  生成中
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center p-1 bg-[var(--color-bg-tertiary)] rounded-lg">
                 <button onClick={() => setSearchScope('global')}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors ${
-                    searchScope === 'global' ? 'bg-white shadow-sm text-indigo-600 font-medium' : 'text-gray-500 hover:text-gray-700'
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md transition-all duration-150 ${
+                    searchScope === 'global'
+                      ? 'bg-[var(--color-bg-elevated)] text-[var(--color-accent)] font-medium shadow-sm'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]'
                   }`} title="全局搜索：跨所有文档检索">
-                  <Globe className="w-4 h-4" /> 全局
+                  <Globe className="w-3.5 h-3.5" /> 全局
                 </button>
                 <button onClick={() => setSearchScope('doc')} disabled={!currentDoc}
-                  className={`flex items-center gap-1.5 px-3 py-1.5 text-sm rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-                    searchScope === 'doc' ? 'bg-white shadow-sm text-indigo-600 font-medium' : 'text-gray-500 hover:text-gray-700'
+                  className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md transition-all duration-150
+                             disabled:opacity-40 disabled:cursor-not-allowed ${
+                    searchScope === 'doc'
+                      ? 'bg-[var(--color-bg-elevated)] text-[var(--color-accent)] font-medium shadow-sm'
+                      : 'text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)]'
                   }`} title={currentDoc ? `当前文档检索：仅在「${currentDoc}」中搜索` : '请先选择一个文档'}>
-                  <FileText className="w-4 h-4" /> 当前文档
+                  <FileText className="w-3.5 h-3.5" /> 当前文档
                 </button>
               </div>
               <button onClick={exportMarkdown}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs
+                         text-[var(--color-text-muted)] hover:text-[var(--color-accent)]
+                         hover:bg-[var(--color-accent-soft)] rounded-lg transition-colors"
                 title="导出为 Markdown">
-                <Download className="w-4 h-4" /> 导出
+                <Download className="w-3.5 h-3.5" />
               </button>
-              <button onClick={handleClearSession}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                title="清空当前会话">
-                <Trash2 className="w-4 h-4" /> 清空会话
-              </button>
+              {streaming ? (
+                <button onClick={cancelStream}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs
+                           text-red-500 hover:bg-red-50 rounded-lg transition-colors">
+                  <X className="w-3.5 h-3.5" /> 停止
+                </button>
+              ) : (
+                <button onClick={handleClearSession}
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs
+                           text-[var(--color-text-muted)] hover:text-red-500
+                           hover:bg-red-50 rounded-lg transition-colors"
+                  title="清空当前会话">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
+
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
             {messages.map(msg => (
-              <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-                <div className={`shrink-0 w-8 h-8 rounded-full flex items-center justify-center ${
-                  msg.role === 'user' ? 'bg-indigo-600' : 'bg-gray-200'
+              <div key={msg.id} className={`flex gap-3 animate-slide-up ${
+                msg.role === 'user' ? 'flex-row-reverse' : ''
+              }`}>
+                <div className={`shrink-0 w-9 h-9 rounded-xl flex items-center justify-center
+                               shadow-sm transition-transform ${
+                  msg.role === 'user'
+                    ? 'bg-gradient-to-br from-indigo-500 to-purple-600'
+                    : 'bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]'
                 }`}>
-                  {msg.role === 'user' ? <User className="w-4 h-4 text-white" /> : <Bot className="w-4 h-4 text-gray-600" />}
+                  {msg.role === 'user'
+                    ? <User className="w-4 h-4 text-white" />
+                    : <Bot className="w-4 h-4 text-[var(--color-text-secondary)]" />}
                 </div>
                 <div className="max-w-2xl">
                   <MessageBubble msg={msg} onCite={(idx) => handleCitationClick(msg, idx)} />
                   {msg.references && msg.references.length > 0 && (
                     <div className="mt-3">
                       <div className="flex items-center gap-2 mb-2">
-                        <span className="text-[11px] font-medium text-gray-400 uppercase tracking-wider">Sources</span>
-                        <div className="flex-1 h-px bg-gray-200" />
+                        <span className="text-[10px] font-semibold text-[var(--color-text-muted)] uppercase tracking-wider flex items-center gap-1">
+                          <FileText className="w-3 h-3" /> 参考来源
+                        </span>
+                        <div className="flex-1 h-px bg-[var(--color-border)]" />
+                        <span className="text-[10px] text-[var(--color-text-muted)]">
+                          {msg.references.length} 个来源
+                        </span>
                       </div>
-                      <div className="flex gap-2 overflow-x-auto pb-1">
+                      <div className="flex gap-2.5 overflow-x-auto pb-1 -mx-1 px-1">
                         {msg.references.map(ref => (
-                          <SourceCard key={ref.index} reference={ref} onClick={() => { setModalRef(ref); onPreview?.(ref.doc_id) }} />
+                          <SourceCard
+                            key={ref.index}
+                            reference={ref}
+                            onClick={() => {
+                              setModalRef(ref)
+                              onPreview?.(ref.doc_id)
+                            }}
+                          />
                         ))}
+                      </div>
+                      <div className="mt-2.5">
+                        <RAGMetricsPanel msg={msg} />
                       </div>
                     </div>
                   )}
@@ -206,10 +281,11 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
         </>
       )}
 
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 bg-white">
-        <div className="max-w-4xl mx-auto">
+      <form onSubmit={handleSubmit} className="p-4 border-t border-[var(--color-border)]
+                                           bg-[var(--color-bg-secondary)]">
+        <div className="max-w-3xl mx-auto">
           <MentionTags docIds={mentionDocIds} docs={docs} onRemove={removeMention} />
-          <div className="relative flex gap-3">
+          <div className="relative flex gap-2.5">
             {showMention && (
               <MentionPopover docs={docs} filter={mentionFilter} onSelect={handleMentionSelect} />
             )}
@@ -221,19 +297,42 @@ export default function ChatArea({ docs, onPreview }: ChatAreaProps) {
               onKeyDown={(e) => { if (e.key === 'Escape') setShowMention(false) }}
               placeholder="输入您的问题... (输入 @ 指定文档)"
               disabled={streaming}
-              className="flex-1 px-4 py-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:bg-gray-100"
+              className="flex-1 px-4 py-3 bg-[var(--color-bg-tertiary)] border border-[var(--color-border)]
+                       rounded-xl focus:outline-none focus:ring-2 focus:ring-[var(--color-accent)]
+                       focus:border-transparent disabled:opacity-50
+                       text-sm text-[var(--color-text-primary)] placeholder:text-[var(--color-text-muted)]
+                       transition-all duration-150"
             />
             <button
               type="submit"
               disabled={streaming || !input.trim()}
-              className="px-6 py-3 bg-indigo-600 text-white rounded-xl font-medium hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 transition-colors"
+              className="px-5 py-3 bg-[var(--color-accent)] hover:bg-[var(--color-accent-hover)]
+                       disabled:opacity-50 disabled:cursor-not-allowed
+                       text-white rounded-xl font-medium text-sm
+                       flex items-center gap-2 transition-colors duration-150 shadow-sm
+                       hover:shadow-md active:scale-[0.98]"
             >
               {streaming ? (
-                <><Loader2 className="w-4 h-4 animate-spin" /> 生成中...</>
+                <><Loader2 className="w-4 h-4 animate-spin" /><span>生成</span></>
               ) : (
-                <><Send className="w-4 h-4" /> 发送</>
+                <><Send className="w-4 h-4" /><span>发送</span></>
               )}
             </button>
+          </div>
+          <div className="flex items-center justify-between mt-2 px-1">
+            <div className="flex items-center gap-3 text-[10px] text-[var(--color-text-muted)]">
+              <span className="flex items-center gap-1">
+                <kbd className="px-1.5 py-0.5 bg-[var(--color-bg-tertiary)] rounded border border-[var(--color-border)]">@</kbd>
+                指定文档
+              </span>
+              <span className="flex items-center gap-1">
+                <kbd className="px-1.5 py-0.5 bg-[var(--color-bg-tertiary)] rounded border border-[var(--color-border)]">Tab</kbd>
+                补全
+              </span>
+            </div>
+            <span className="text-[10px] text-[var(--color-text-muted)]">
+              Nova-RAG v2.0
+            </span>
           </div>
         </div>
       </form>
