@@ -19,6 +19,19 @@ Nova-RAG/
 
 ## 启动命令
 
+### tmux 会话管理
+
+```bash
+# 查看现有会话
+tmux ls
+
+# 关闭指定会话
+tmux kill-session -t <session_name>
+
+# 关闭所有会话
+tmux kill-server
+```
+
 ### PostgreSQL
 ```bash
 # Docker 单容器 (port 5433)
@@ -28,17 +41,36 @@ docker run -d --name pgvector -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=novar
 docker compose up -d
 ```
 
-### 后端
+### 后端 (tmux)
 ```bash
-cd backend
-uv run uvicorn src.api.server:app --host 0.0.0.0 --port 5000
+# 启动后端服务
+tmux new-session -d -s backend "cd /home/lcl/Nova-RAG/backend && .venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 5000"
+
+# 查看后端日志
+tmux capture-pane -t backend -p | tail -20
+
+# 进入后端会话交互
+tmux attach -t backend
 ```
 
-### 前端
+### 前端 (tmux)
 ```bash
-cd frontend
-npm install
-npm run dev
+# 启动前端开发服务器
+tmux new-session -d -s frontend "cd /home/lcl/Nova-RAG/frontend && npm run dev -- --host 0.0.0.0"
+
+# 查看前端日志
+tmux capture-pane -t frontend -p | tail -10
+
+# 进入前端会话交互
+tmux attach -t frontend
+```
+
+### 快速重启所有服务
+```bash
+tmux kill-session -t backend 2>/dev/null; tmux kill-session -t frontend 2>/dev/null
+sleep 1
+tmux new-session -d -s backend "cd /home/lcl/Nova-RAG/backend && .venv/bin/python -m uvicorn src.api.server:app --host 0.0.0.0 --port 5000"
+tmux new-session -d -s frontend "cd /home/lcl/Nova-RAG/frontend && npm run dev -- --host 0.0.0.0"
 ```
 
 ## 环境变量 (backend/.env)
